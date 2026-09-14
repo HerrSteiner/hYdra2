@@ -93,7 +93,7 @@ ApplicationWindow {
 
         defaultSuffix: selectedNameFilter.index === 1 ? "ads" : "het"
 
-        onAccepted: hydraDocument.saveAs(selectedFile)
+        onAccepted: hydraDocument.saveAs(selectedFile,selectedNameFilter.index)
     }
 
     Dialog {

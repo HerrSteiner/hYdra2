@@ -43,7 +43,7 @@ public:
 
     Q_INVOKABLE bool openUrl(const QUrl& url);
     Q_INVOKABLE bool save();
-    Q_INVOKABLE bool saveAs(const QUrl& url);
+    Q_INVOKABLE bool saveAs(const QUrl& url, int formatIndex);
 
     void setPartialGain(int partial, double gain);
     void setPartialSelection(int partial, bool additive = false, bool toggle = false);
@@ -65,7 +65,7 @@ private:
     QVector<Breakpoint>& mutableTrack(int partial, TrackKind kind);
     void setDirty(bool value);
     void setError(const QString& error);
-    bool saveToPath(const QString& path, bool chooseFormatFromSuffix);
+    bool saveToPath(const QString& path, HetFormat format);
     HetFormat formatForPath(const QString& path) const;
 
     HetData data_;

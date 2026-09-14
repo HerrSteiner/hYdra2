@@ -1,5 +1,6 @@
 #include "HydraDocument.hpp"
 
+#include <QDir>
 #include <QtCore/QFileInfo>
 
 #include <algorithm>
@@ -153,25 +154,45 @@ bool HydraDocument::save()
         setError(QStringLiteral("Choose a filename with Save As first."));
         return false;
     }
-    return saveToPath(path_, false);
+    return saveToPath(path_, data_.format);
 }
 
-bool HydraDocument::saveAs(const QUrl& url)
+bool HydraDocument::saveAs(const QUrl& url, int formatIndex)
 {
-    const QString path = url.toLocalFile();
-    if (path.isEmpty()) {
-        setError(QStringLiteral("The selected URL is not a local file."));
-        return false;
+    QString path = url.toLocalFile();
+
+    if (formatIndex == 1) {
+        // Legacy ADS binary.
+        QFileInfo info(path);
+        path = info.dir().filePath(info.completeBaseName() + QStringLiteral(".ads"));
+
+        return saveToPath(
+            path,
+            HetFormat::LegacyBinaryLittleEndian
+            );
     }
-    return saveToPath(path, true);
+
+    // Current HETRO text.
+    QFileInfo info(path);
+    path = info.dir().filePath(info.completeBaseName() + QStringLiteral(".het"));
+
+    return saveToPath(
+        path,
+        HetFormat::CurrentText
+        );
 }
 
-bool HydraDocument::saveToPath(const QString& path, bool chooseFormatFromSuffix)
+bool HydraDocument::saveToPath(const QString& path, HetFormat format)
 {
-    const HetFormat format = chooseFormatFromSuffix ? formatForPath(path) : data_.format;
     bool withHeader = data_.binaryHasHeader;
-    if (chooseFormatFromSuffix && format != HetFormat::CurrentText && data_.format == HetFormat::CurrentText)
+
+    // When converting a text HETRO file to legacy binary, write the
+    // partial-count header. For existing binary files, preserve the
+    // header style that was loaded.
+    if (format != HetFormat::CurrentText &&
+        data_.format == HetFormat::CurrentText) {
         withHeader = true;
+    }
 
     QString error;
     if (!HetFile::save(path, data_, format, withHeader, error)) {
