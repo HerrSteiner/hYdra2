@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace hydra2 {
 namespace {
@@ -258,7 +259,7 @@ void HydraDocument::selectPoint(const PointRef& ref, bool additive, bool toggle)
     if (toggle && it != selectedPoints_.end()) {
         selectedPoints_.erase(it);
         bool stillHasPartial = false;
-        for (const auto& item : selectedPoints_) {
+        for (const auto& item : std::as_const(selectedPoints_)) {
             if (item.partial == ref.partial) {
                 stillHasPartial = true;
                 break;
@@ -289,7 +290,7 @@ void HydraDocument::moveSelected(int deltaTimeMs, int deltaDisplayValue, TrackKi
 
     QSet<int> touchedPartials;
     bool changed = false;
-    for (const auto& ref : selectedPoints_) {
+    for (const auto& ref :  std::as_const(selectedPoints_)) {
         if (ref.kind != kind)
             continue;
         Breakpoint* p = mutablePoint(ref);

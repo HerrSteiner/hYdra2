@@ -37,6 +37,7 @@ private:
     int draggingPartial_ = -1;
     QPointF pressPos_;
     bool levelDragStarted_ = false;
+    double dragNaturalHeight_ = 0.0;
 };
 
 } // namespace hydra2

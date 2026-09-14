@@ -78,13 +78,13 @@ double BreakpointEditor::maxY() const
     return std::min(32767, std::max(1000, rounded));
 }
 
-QPointF BreakpointEditor::toScreen(int partial, const Breakpoint& point) const
+QPointF BreakpointEditor::toScreen(int partial, const Breakpoint& point,
+                                        double durationMs, double yMaximum) const
 {
     const QRectF r = plotRect();
-    const double duration = std::max(1, document_ ? document_->durationMs() : 1);
-    const double x = r.left() + (point.timeMs / duration) * r.width();
+    const double x = r.left() + (point.timeMs / durationMs) * r.width();
     const double value = document_ ? document_->displayValue(partial, mode_, point) : point.value;
-    const double y = r.bottom() - (value / maxY()) * r.height();
+    const double y = r.bottom() - (value / yMaximum) * r.height();
     return {x, y};
 }
 
@@ -108,8 +108,10 @@ void BreakpointEditor::paint(QPainter* painter)
         painter->drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
     }
 
+    const double duration = std::max(1, document_ ? document_->durationMs() : 1);
+    const double yMaximum = maxY();
+
     painter->setPen(QColor(210, 214, 220));
-    const int duration = document_ ? document_->durationMs() : 0;
     for (int i = 0; i <= 5; ++i) {
         const qreal x = r.left() + r.width() * i / 5.0;
         const double seconds = (duration * i / 5.0) / 1000.0;
@@ -118,7 +120,6 @@ void BreakpointEditor::paint(QPainter* painter)
                           QString::number(seconds, 'f', duration < 10000 ? 2 : 1) + QStringLiteral(" s"));
     }
 
-    const double yMaximum = maxY();
     for (int i = 0; i <= 4; ++i) {
         const qreal y = r.bottom() - r.height() * i / 4.0;
         const int value = static_cast<int>(std::lround(yMaximum * i / 4.0));
@@ -150,15 +151,15 @@ void BreakpointEditor::paint(QPainter* painter)
         painter->setPen(linePen);
 
         QPainterPath path;
-        path.moveTo(toScreen(partial, points.first()));
+        path.moveTo(toScreen(partial, points.first(), duration, yMaximum));
         for (qsizetype i = 1; i < points.size(); ++i)
-            path.lineTo(toScreen(partial, points.at(i)));
+            path.lineTo(toScreen(partial, points.at(i), duration, yMaximum));
         painter->drawPath(path);
 
         for (const auto& point : points) {
             const PointRef ref{partial, mode_, point.id};
             const bool selectedPoint = document_->isPointSelected(ref);
-            const QPointF pos = toScreen(partial, point);
+            const QPointF pos = toScreen(partial, point, duration, yMaximum);
             const qreal radius = selectedPoint ? 5.0 : (selectedPartial ? 3.6 : 2.4);
             painter->setPen(selectedPoint ? QColor(255, 236, 120) : lineColor);
             painter->setBrush(selectedPoint ? QColor(255, 214, 64) : QColor(32, 35, 40));
@@ -177,7 +178,7 @@ void BreakpointEditor::paint(QPainter* painter)
     if (validRef(activePoint_)) {
         const Breakpoint* point = document_->point(activePoint_);
         if (point) {
-            const QPointF pos = toScreen(activePoint_.partial, *point);
+            const QPointF pos = toScreen(activePoint_.partial, *point, duration, yMaximum);
             const QString text = activeLabel();
             const QFontMetrics fm(painter->font());
             QRectF labelRect = fm.boundingRect(text);
@@ -200,6 +201,9 @@ PointRef BreakpointEditor::hitTest(const QPointF& pos) const
     if (!document_)
         return {};
 
+    const double duration = std::max(1, document_->durationMs());
+    const double yMaximum = maxY();
+
     PointRef best;
     double bestDistance = kHitRadius * kHitRadius;
 
@@ -215,7 +219,7 @@ PointRef BreakpointEditor::hitTest(const QPointF& pos) const
 
     for (int partial : order) {
         for (const auto& point : document_->track(partial, mode_)) {
-            const QPointF screen = toScreen(partial, point);
+            const QPointF screen = toScreen(partial, point, duration, yMaximum);
             const double dx = screen.x() - pos.x();
             const double dy = screen.y() - pos.y();
             const double d2 = dx * dx + dy * dy;
@@ -233,10 +237,12 @@ QVector<PointRef> BreakpointEditor::refsInside(const QRectF& rect) const
     QVector<PointRef> refs;
     if (!document_)
         return refs;
+    const double duration = std::max(1, document_->durationMs());
+    const double yMaximum = maxY();
     const QRectF normalized = rect.normalized();
     for (int partial = 0; partial < document_->partialCount(); ++partial) {
         for (const auto& point : document_->track(partial, mode_)) {
-            if (normalized.contains(toScreen(partial, point)))
+            if (normalized.contains(toScreen(partial, point, duration, yMaximum)))
                 refs.push_back({partial, mode_, point.id});
         }
     }

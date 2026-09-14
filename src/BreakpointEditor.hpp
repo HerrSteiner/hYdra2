@@ -35,7 +35,8 @@ protected:
 private:
     QRectF plotRect() const;
     double maxY() const;
-    QPointF toScreen(int partial, const Breakpoint& point) const;
+    QPointF toScreen(int partial, const Breakpoint& point,
+                     double durationMs, double yMaximum) const;
     PointRef hitTest(const QPointF& pos) const;
     QVector<PointRef> refsInside(const QRectF& rect) const;
     QString activeLabel() const;

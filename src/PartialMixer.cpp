@@ -49,18 +49,21 @@ void PartialMixer::paint(QPainter* painter)
         return;
     }
 
-    double maxAverage = 1.0;
-    for (int p = 0; p < document_->partialCount(); ++p)
-        maxAverage = std::max(maxAverage, document_->partialAverageAmplitude(p));
-
     const int count = document_->partialCount();
+    QVector<double> averages(count);
+    double maxAverage = 1.0;
+    for (int p = 0; p < count; ++p) {
+        averages[p] = document_->partialAverageAmplitude(p);
+        maxAverage = std::max(maxAverage, averages[p]);
+    }
+
     const qreal columnWidth = r.width() / count;
     const qreal gap = std::clamp(columnWidth * 0.18, 1.0, 5.0);
 
     for (int p = 0; p < count; ++p) {
         const qreal left = r.left() + p * columnWidth + gap * 0.5;
         const qreal barWidth = std::max<qreal>(1.0, columnWidth - gap);
-        const double average = document_->partialAverageAmplitude(p);
+        const double average = averages.at(p);
         const double naturalFraction = average / maxAverage;
         const qreal naturalHeight = std::max<qreal>(2.0, naturalFraction * r.height());
         const qreal visibleHeight = naturalHeight * document_->partialGain(p);
@@ -120,16 +123,10 @@ void PartialMixer::editAt(const QPointF& pos, Qt::KeyboardModifiers modifiers, b
         document_->setPartialSelection(p, additive, toggle);
     }
 
-    double maxAverage = 1.0;
-    for (int i = 0; i < document_->partialCount(); ++i)
-        maxAverage = std::max(maxAverage, document_->partialAverageAmplitude(i));
-
     const QRectF r = innerRect();
-    const double average = document_->partialAverageAmplitude(p);
-    const double naturalFraction = average / maxAverage;
-    const double naturalHeight = std::max(2.0, naturalFraction * r.height());
+    const double naturalHeight = std::max(2.0, dragNaturalHeight_);
     const double requestedHeight = std::clamp(r.bottom() - pos.y(), 0.0, naturalHeight);
-    const double gain = naturalHeight > 0.0 ? requestedHeight / naturalHeight : 0.0;
+    const double gain = requestedHeight / naturalHeight;
     document_->setPartialGain(p, gain);
 }
 
@@ -143,6 +140,14 @@ void PartialMixer::mousePressEvent(QMouseEvent* event)
 
     pressPos_ = event->position();
     levelDragStarted_ = false;
+
+    // The raw partial averages do not change while a mixer gain is dragged,
+    // so calculate the slider's natural height only once per gesture.
+    double maxAverage = 1.0;
+    for (int i = 0; i < document_->partialCount(); ++i)
+        maxAverage = std::max(maxAverage, document_->partialAverageAmplitude(i));
+    const double average = document_->partialAverageAmplitude(draggingPartial_);
+    dragNaturalHeight_ = std::max(2.0, (average / maxAverage) * innerRect().height());
     const bool additive = event->modifiers().testFlag(Qt::ShiftModifier)
                        || event->modifiers().testFlag(Qt::ControlModifier)
                        || event->modifiers().testFlag(Qt::MetaModifier);
@@ -170,6 +175,7 @@ void PartialMixer::mouseReleaseEvent(QMouseEvent* event)
     Q_UNUSED(event);
     draggingPartial_ = -1;
     levelDragStarted_ = false;
+    dragNaturalHeight_ = 0.0;
 }
 
 } // namespace hydra2

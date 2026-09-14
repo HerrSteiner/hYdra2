@@ -85,10 +85,14 @@ ApplicationWindow {
         id: saveDialog
         title: qsTr("Save analysis")
         fileMode: FileDialog.SaveFile
+
         nameFilters: [
             qsTr("Current HETRO text (*.het)"),
             qsTr("Legacy adsyn binary (*.ads)")
         ]
+
+        defaultSuffix: selectedNameFilter.index === 1 ? "ads" : "het"
+
         onAccepted: hydraDocument.saveAs(selectedFile)
     }
 
