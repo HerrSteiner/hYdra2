@@ -66,7 +66,10 @@ void PartialMixer::paint(QPainter* painter)
         const double average = averages.at(p);
         const double naturalFraction = average / maxAverage;
         const qreal naturalHeight = std::max<qreal>(2.0, naturalFraction * r.height());
-        const qreal visibleHeight = naturalHeight * document_->partialGain(p);
+        const qreal visibleHeight = std::min<qreal>(
+            r.height(),
+            naturalHeight * document_->partialGain(p)
+        );
 
         QRectF slot(left, r.bottom() - naturalHeight, barWidth, naturalHeight);
         painter->setPen(Qt::NoPen);
@@ -125,8 +128,20 @@ void PartialMixer::editAt(const QPointF& pos, Qt::KeyboardModifiers modifiers, b
 
     const QRectF r = innerRect();
     const double naturalHeight = std::max(2.0, dragNaturalHeight_);
-    const double requestedHeight = std::clamp(r.bottom() - pos.y(), 0.0, naturalHeight);
-    const double gain = requestedHeight / naturalHeight;
+
+    // The translucent slot represents the partial's original (1x) level.
+    // Allow the solid bar to be dragged above that level, up to the top
+    // of the mixer. HydraDocument applies the final safety clamp based
+    // on the partial's available amplitude headroom.
+    const double requestedHeight = std::clamp(
+        static_cast<double>(r.bottom() - pos.y()),
+        0.0,
+        static_cast<double>(r.height())
+    );
+
+    double gain = requestedHeight / naturalHeight;
+    gain = std::min(gain, document_->partialMaximumGain(p));
+
     document_->setPartialGain(p, gain);
 }
 

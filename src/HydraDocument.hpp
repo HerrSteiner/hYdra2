@@ -35,6 +35,7 @@ public:
     double displayValue(int partial, TrackKind kind, const Breakpoint& point) const;
     double partialAverageAmplitude(int partial) const;
     double partialGain(int partial) const;
+    double partialMaximumGain(int partial) const;
 
     const QSet<int>& selectedPartials() const { return selectedPartials_; }
     const QVector<PointRef>& selectedPoints() const { return selectedPoints_; }

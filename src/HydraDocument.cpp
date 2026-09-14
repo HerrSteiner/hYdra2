@@ -121,6 +121,24 @@ Breakpoint* HydraDocument::mutablePoint(const PointRef& ref)
     return it == points.end() ? nullptr : &*it;
 }
 
+double HydraDocument::partialMaximumGain(int partial) const
+{
+    if (partial < 0 || partial >= data_.partials.size())
+        return 1.0;
+
+    const auto& points = data_.partials.at(partial).amplitude;
+
+    int peak = 0;
+    for (const auto& point : points)
+        peak = std::max(peak, point.value);
+
+    if (peak <= 0)
+        return 1.0;
+
+    return 32767.0 / static_cast<double>(peak);
+}
+
+
 bool HydraDocument::openUrl(const QUrl& url)
 {
     const QString path = url.toLocalFile();
@@ -224,7 +242,11 @@ void HydraDocument::setPartialGain(int partial, double gain)
 {
     if (partial < 0 || partial >= data_.partials.size())
         return;
-    gain = std::clamp(gain, 0.0, 1.0);
+    gain = std::clamp(
+        gain,
+        0.0,
+        partialMaximumGain(partial)
+        );
     if (qFuzzyCompare(data_.partials.at(partial).gain + 1.0, gain + 1.0))
         return;
 
