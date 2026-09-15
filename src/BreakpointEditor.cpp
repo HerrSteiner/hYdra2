@@ -169,9 +169,10 @@ void BreakpointEditor::paint(QPainter* painter)
 
         QPainterPath path;
         path.moveTo(toScreen(partial, points.first(), duration, yMaximum));
-        for (qsizetype i = 1; i < points.size(); ++i)
+        for (qsizetype i = 1; i < points.size(); ++i){
             path.lineTo(toScreen(partial, points.at(i), duration, yMaximum));
-        painter->drawPath(path);
+        }
+        painter->strokePath(path,linePen);
 
         for (const auto& point : points) {
             const PointRef ref{partial, mode_, point.id};

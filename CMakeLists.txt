@@ -84,7 +84,7 @@ install(SCRIPT ${deploy_script})
 
 include(CTest)
 if(BUILD_TESTING)
-    find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
+    find_package(Qt6 ${HYDRA2_MIN_QT_VERSION} REQUIRED COMPONENTS Test)
     qt_add_executable(tst_hetfile
         tests/tst_hetfile.cpp
     )
