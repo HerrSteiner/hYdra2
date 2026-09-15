@@ -76,6 +76,13 @@ public:
 signals:
     void documentReset();
     void dataChanged();
+    // Identifies partials whose breakpoint/display data changed. This lets
+    // GPU-backed views refresh only the affected series instead of rebuilding
+    // every partial for each mouse move.
+    void partialsChanged(const QVector<int>& partials);
+    // Raw breakpoint data changed. Mixer uses this to refresh its cached
+    // natural levels; gain-only changes intentionally do not emit it.
+    void rawPartialsChanged(const QVector<int>& partials);
     void selectionChanged();
     void fileChanged();
     void dirtyChanged();

@@ -16,28 +16,36 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 #pragma once
 
-#include <QtCore/QPointF>
-
 #include "HydraDocument.hpp"
 
-#include <QtQuick/QQuickPaintedItem>
+#include <QtCore/QVariantList>
+#include <QtQuick/QQuickItem>
 
 namespace hydra2 {
 
-class PartialMixer : public QQuickPaintedItem
+// Interaction/controller item for the Qt Graphs partial mixer. Rendering is
+// done by GraphsView/BarSeries in QML; this item only provides normalized data
+// and retains the existing multi-selection + linked-drag behaviour.
+class PartialMixer : public QQuickItem
 {
     Q_OBJECT
     Q_PROPERTY(HydraDocument* document READ document WRITE setDocument NOTIFY documentChanged)
+    Q_PROPERTY(QVariantList values READ values NOTIFY valuesChanged)
+    Q_PROPERTY(QVariantList selectedBars READ selectedBars NOTIFY selectionValuesChanged)
 
 public:
     explicit PartialMixer(QQuickItem* parent = nullptr);
 
     HydraDocument* document() const { return document_; }
     void setDocument(HydraDocument* document);
-    void paint(QPainter* painter) override;
+
+    QVariantList values() const;
+    QVariantList selectedBars() const;
 
 signals:
     void documentChanged();
+    void valuesChanged();
+    void selectionValuesChanged();
 
 protected:
     void mousePressEvent(QMouseEvent* event) override;
@@ -47,7 +55,11 @@ protected:
 private:
     QRectF innerRect() const;
     int partialAt(qreal x) const;
-    void editAt(const QPointF& pos, Qt::KeyboardModifiers modifiers, bool select);
+    void editAt(const QPointF& pos);
+    void rebuildAverageCache();
+    void refreshAverageCache(const QVector<int>& partials);
+    double maximumAverage() const;
+    double naturalHeight(int partial, double maxAverage) const;
 
     HydraDocument* document_ = nullptr;
     int draggingPartial_ = -1;
@@ -56,6 +68,8 @@ private:
     QVector<int> dragPartials_;
     QVector<double> dragStartGains_;
     QVector<double> dragNaturalHeights_;
+    QVector<double> averageAmplitudes_;
+    double maximumAverage_ = 1.0;
 };
 
 } // namespace hydra2

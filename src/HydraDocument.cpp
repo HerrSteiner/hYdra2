@@ -304,6 +304,13 @@ void HydraDocument::normalizeAmplitudes()
 
     setDirty(true);
     emit dataChanged();
+
+    QVector<int> changedPartials;
+    changedPartials.reserve(data_.partials.size());
+    for (int partial = 0; partial < data_.partials.size(); ++partial)
+        changedPartials.push_back(partial);
+    emit rawPartialsChanged(changedPartials);
+    emit partialsChanged(changedPartials);
 }
 
 void HydraDocument::setPartialGain(int partial, double gain)
@@ -318,6 +325,7 @@ void HydraDocument::setPartialGain(int partial, double gain)
     data_.partials[partial].gain = gain;
     setDirty(true);
     emit dataChanged();
+    emit partialsChanged(QVector<int>{partial});
 }
 
 void HydraDocument::setPartialGains(const QVector<int>& partials,
@@ -325,6 +333,8 @@ void HydraDocument::setPartialGains(const QVector<int>& partials,
 {
     const qsizetype count = std::min(partials.size(), gains.size());
     bool changed = false;
+    QVector<int> changedPartials;
+    changedPartials.reserve(count);
 
     for (qsizetype i = 0; i < count; ++i) {
         const int partial = partials.at(i);
@@ -342,6 +352,8 @@ void HydraDocument::setPartialGains(const QVector<int>& partials,
 
         data_.partials[partial].gain = gain;
         changed = true;
+        if (!changedPartials.contains(partial))
+            changedPartials.push_back(partial);
     }
 
     if (!changed)
@@ -349,6 +361,7 @@ void HydraDocument::setPartialGains(const QVector<int>& partials,
 
     setDirty(true);
     emit dataChanged();
+    emit partialsChanged(changedPartials);
 }
 
 void HydraDocument::setPartialSelection(int partial, bool additive, bool toggle)
@@ -669,17 +682,20 @@ void HydraDocument::moveSelected(int deltaTimeMs,
     }
 
     bool changed = false;
+    QSet<int> touchedPartials;
 
     if (deltaTimeMs != 0) {
-        for (int partial : std::as_const(wholePartials))
-            changed |= translateWholePartial(partial, deltaTimeMs);
+        for (int partial : std::as_const(wholePartials)) {
+            if (translateWholePartial(partial, deltaTimeMs)) {
+                changed = true;
+                touchedPartials.insert(partial);
+            }
+        }
     }
 
     int ordinaryDeltaTime = deltaTimeMs;
     if (logicSnap)
         ordinaryDeltaTime = snappedDeltaTime(deltaTimeMs, kind, wholePartials);
-
-    QSet<int> touchedPartials;
 
     for (const auto& ref : std::as_const(selectedPoints_)) {
         if (ref.kind != kind)
@@ -734,6 +750,11 @@ void HydraDocument::moveSelected(int deltaTimeMs,
 
     setDirty(true);
     emit dataChanged();
+
+    QVector<int> changedPartials = touchedPartials.values();
+    std::sort(changedPartials.begin(), changedPartials.end());
+    emit rawPartialsChanged(changedPartials);
+    emit partialsChanged(changedPartials);
 }
 
 void HydraDocument::setDirty(bool value)

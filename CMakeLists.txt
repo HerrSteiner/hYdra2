@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(hYdra2
-    VERSION 0.5.0
+    VERSION 0.6.0
     DESCRIPTION "Modern editor for Csound HETRO/adsyn analysis files"
     LANGUAGES CXX
 )
@@ -10,13 +10,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-if(APPLE)
-	set(HYDRA2_MIN_QT_VERSION 6.9) # earlier versions on macOs needs AGL which is deprecated
-else()
-	set(HYDRA2_MIN_QT_VERSION 6.8)
-endif()
+set(HYDRA2_MIN_QT_VERSION 6.9)
 
-find_package(Qt6 ${HYDRA2_MIN_QT_VERSION} REQUIRED COMPONENTS Core Qml Quick QuickControls2)
+find_package(Qt6 ${HYDRA2_MIN_QT_VERSION} REQUIRED COMPONENTS Core Qml Quick QuickControls2 Graphs)
 qt_standard_project_setup(REQUIRES ${HYDRA2_MIN_QT_VERSION})
 
 add_library(hydra2_core STATIC
@@ -33,8 +29,8 @@ target_link_libraries(hydra2_core PUBLIC Qt6::Core)
 qt_add_executable(hydra2
     MACOSX_BUNDLE
     src/main.cpp
-    src/BreakpointEditor.cpp
-    src/BreakpointEditor.hpp
+    src/BreakpointGraphModel.cpp
+    src/BreakpointGraphModel.hpp
     src/PartialMixer.cpp
     src/PartialMixer.hpp
 )
@@ -49,6 +45,7 @@ target_link_libraries(hydra2
         hydra2_core
         Qt6::Quick
         Qt6::QuickControls2
+        Qt6::Graphs
 )
 
 qt_add_qml_module(hydra2
