@@ -71,7 +71,7 @@ public:
     void setPointSelection(const QVector<PointRef>& refs, bool additive = false);
     void selectPoint(const PointRef& ref, bool additive = false, bool toggle = false);
     void clearSelection();
-    void moveSelected(int deltaTimeMs, int deltaDisplayValue, TrackKind kind);
+    void moveSelected(int deltaTimeMs, int deltaDisplayValue, TrackKind kind, bool logicSnap = true);
 
 signals:
     void documentReset();
@@ -88,6 +88,12 @@ private:
     void setError(const QString& error);
     bool saveToPath(const QString& path, HetFormat format);
     HetFormat formatForPath(const QString& path) const;
+    bool isWholePartialSelected(int partial) const;
+    bool translateWholePartial(int partial, int deltaTimeMs);
+    int snappedDeltaTime(int requestedDeltaTimeMs, TrackKind kind,
+                         const QSet<int>& excludedPartials) const;
+    quint64 nextBreakpointId() const;
+    void rebuildWholePartialSelection(int partial);
 
     HetData data_;
     QString path_;

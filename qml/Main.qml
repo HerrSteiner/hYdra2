@@ -31,6 +31,7 @@ ApplicationWindow {
     title: (hydraDocument.dirty ? "*" : "") + hydraDocument.fileName + " — hYdra2"
 
     property int editorMode: 0
+    property bool logicSnap: true
 
     // Actions live outside the Menu. Otherwise an Action declared inside a Menu
     // already becomes a menu entry and adding a MenuItem for it duplicates it.
@@ -72,6 +73,14 @@ ApplicationWindow {
     }
 
     Action {
+        id: logicSnapAction
+        text: qsTr("Logic Snap")
+        checkable: true
+        checked: window.logicSnap
+        onToggled: window.logicSnap = checked
+    }
+
+    Action {
         id: aboutAction
         text: qsTr("About hYdra2")
         onTriggered: aboutDialog.open()
@@ -91,6 +100,13 @@ ApplicationWindow {
         Menu {
             title: qsTr("Edit")
             MenuItem { action: normalizeAmplitudesAction }
+            MenuSeparator { }
+            MenuItem {
+                action: logicSnapAction
+                ToolTip.visible: hovered
+                ToolTip.delay: 500
+                ToolTip.text: qsTr("Prevents breakpoints from crossing neighboring points when dragged.")
+            }
         }
 
         Menu {
@@ -213,6 +229,7 @@ ApplicationWindow {
             Layout.minimumHeight: 300
             document: hydraDocument
             mode: window.editorMode
+            logicSnap: window.logicSnap
         }
 
         Rectangle {

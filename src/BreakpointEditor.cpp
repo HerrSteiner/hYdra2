@@ -100,6 +100,14 @@ void BreakpointEditor::setMode(int mode)
     update();
 }
 
+void BreakpointEditor::setLogicSnap(bool enabled)
+{
+    if (logicSnap_ == enabled)
+        return;
+    logicSnap_ = enabled;
+    emit logicSnapChanged();
+}
+
 QRectF BreakpointEditor::plotRect() const
 {
     return QRectF(kLeft, kTop,
@@ -204,10 +212,13 @@ void BreakpointEditor::paint(QPainter* painter)
             const PointRef ref{partial, mode_, point.id};
             const bool selectedPoint = document_->isPointSelected(ref);
             const QPointF pos = toScreen(partial, point, duration, yMaximum);
-            const qreal radius = selectedPoint ? 5.0 : (selectedPartial ? 3.6 : 2.4);
+            const qreal halfSize = selectedPoint ? 5.0 : (selectedPartial ? 3.6 : 2.4);
             painter->setPen(selectedPoint ? QColor(255, 236, 120) : lineColor);
             painter->setBrush(selectedPoint ? QColor(255, 214, 64) : QColor(32, 35, 40));
-            painter->drawEllipse(pos, radius, radius);
+            painter->drawRect(QRectF(pos.x() - halfSize,
+                                     pos.y() - halfSize,
+                                     halfSize * 2.0,
+                                     halfSize * 2.0));
         }
     }
 
@@ -412,7 +423,7 @@ void BreakpointEditor::mouseMoveEvent(QMouseEvent* event)
         const int dt = static_cast<int>(std::lround(delta.x() * std::max(1, document_->durationMs()) / r.width()));
         const int dv = static_cast<int>(std::lround(-delta.y() * maxY() / r.height()));
         if (dt != 0 || dv != 0) {
-            document_->moveSelected(dt, dv, mode_);
+            document_->moveSelected(dt, dv, mode_, logicSnap_);
             lastMousePos_ = event->position();
         }
     } else if (lassoing_) {

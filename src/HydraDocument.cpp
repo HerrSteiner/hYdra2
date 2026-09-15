@@ -461,32 +461,254 @@ void HydraDocument::clearSelection()
     emit selectionChanged();
 }
 
-void HydraDocument::moveSelected(int deltaTimeMs, int deltaDisplayValue, TrackKind kind)
+bool HydraDocument::isWholePartialSelected(int partial) const
+{
+    if (partial < 0 || partial >= data_.partials.size())
+        return false;
+
+    bool hasPoints = false;
+    for (TrackKind kind : {TrackKind::Amplitude, TrackKind::Frequency}) {
+        for (const auto& point : track(partial, kind)) {
+            hasPoints = true;
+            if (!containsRef(selectedPoints_, PointRef{partial, kind, point.id}))
+                return false;
+        }
+    }
+    return hasPoints;
+}
+
+quint64 HydraDocument::nextBreakpointId() const
+{
+    quint64 maximum = 0;
+    for (const auto& partial : data_.partials) {
+        for (const auto& point : partial.amplitude)
+            maximum = std::max(maximum, point.id);
+        for (const auto& point : partial.frequency)
+            maximum = std::max(maximum, point.id);
+    }
+    return maximum + 1;
+}
+
+void HydraDocument::rebuildWholePartialSelection(int partial)
+{
+    selectedPoints_.erase(std::remove_if(selectedPoints_.begin(), selectedPoints_.end(),
+                                         [&](const PointRef& ref) {
+                                             return ref.partial == partial;
+                                         }),
+                          selectedPoints_.end());
+
+    for (TrackKind kind : {TrackKind::Amplitude, TrackKind::Frequency}) {
+        for (const auto& point : track(partial, kind))
+            selectedPoints_.push_back({partial, kind, point.id});
+    }
+    selectedPartials_.insert(partial);
+}
+
+bool HydraDocument::translateWholePartial(int partial, int deltaTimeMs)
+{
+    if (partial < 0 || partial >= data_.partials.size() || deltaTimeMs == 0)
+        return false;
+
+    // Work out one legal delta for both ADSYN tracks so amplitude and
+    // frequency stay aligned. The first t=0 point is a permanent anchor.
+    int minimumDelta = -32766;
+    int maximumDelta = 32766;
+    bool hasMovablePoint = false;
+
+    for (TrackKind kind : {TrackKind::Amplitude, TrackKind::Frequency}) {
+        const auto& points = track(partial, kind);
+        if (points.isEmpty())
+            continue;
+
+        const int anchorValue = points.first().value;
+        int firstDifferentTime = -1;
+
+        for (qsizetype i = 1; i < points.size(); ++i) {
+            hasMovablePoint = true;
+            maximumDelta = std::min(maximumDelta, 32766 - points.at(i).timeMs);
+            if (firstDifferentTime < 0 && points.at(i).value != anchorValue)
+                firstDifferentTime = points.at(i).timeMs;
+        }
+
+        // Initial points having the same value as the t=0 anchor are just a
+        // hold and may collapse back into the anchor. A point with a different
+        // value must remain at least 1 ms after t=0.
+        if (firstDifferentTime >= 0)
+            minimumDelta = std::max(minimumDelta, 1 - firstDifferentTime);
+    }
+
+    if (!hasMovablePoint)
+        return false;
+
+    const int delta = std::clamp(deltaTimeMs, minimumDelta, maximumDelta);
+    if (delta == 0)
+        return false;
+
+    bool changed = false;
+
+    for (TrackKind kind : {TrackKind::Amplitude, TrackKind::Frequency}) {
+        auto& points = mutableTrack(partial, kind);
+        if (points.isEmpty())
+            continue;
+
+        const int anchorValue = points.first().value;
+
+        // If the trajectory currently starts immediately by moving away from
+        // the anchor, shifting right needs a duplicate anchor at the amount of
+        // delay. This keeps the original first segment's duration unchanged.
+        const bool needsHoldPoint =
+            delta > 0 &&
+            points.size() > 1 &&
+            points.at(1).value != anchorValue;
+
+        for (qsizetype i = 1; i < points.size(); ++i) {
+            points[i].timeMs += delta;
+            changed = true;
+        }
+
+        // Initial hold points can disappear into the permanent zero-time
+        // anchor when a delayed partial is moved back to the left.
+        while (points.size() > 1 &&
+               points.at(1).timeMs <= 0 &&
+               points.at(1).value == anchorValue) {
+            points.removeAt(1);
+            changed = true;
+        }
+
+        if (needsHoldPoint) {
+            const int holdTime = delta;
+            if (holdTime > 0 && holdTime < points.at(1).timeMs) {
+                points.insert(1, Breakpoint{nextBreakpointId(), holdTime, anchorValue});
+                changed = true;
+            }
+        }
+
+        std::stable_sort(points.begin(), points.end(),
+                         [](const Breakpoint& a, const Breakpoint& b) {
+                             return a.timeMs < b.timeMs;
+                         });
+    }
+
+    if (changed)
+        rebuildWholePartialSelection(partial);
+
+    return changed;
+}
+
+int HydraDocument::snappedDeltaTime(int requestedDeltaTimeMs,
+                                    TrackKind kind,
+                                    const QSet<int>& excludedPartials) const
+{
+    if (requestedDeltaTimeMs == 0)
+        return 0;
+
+    int minimumDelta = -32766;
+    int maximumDelta = 32766;
+    bool hasMovableSelection = false;
+
+    for (int partial = 0; partial < data_.partials.size(); ++partial) {
+        if (excludedPartials.contains(partial))
+            continue;
+
+        const auto& points = track(partial, kind);
+        if (points.isEmpty())
+            continue;
+
+        QVector<bool> movable(points.size(), false);
+        for (qsizetype i = 0; i < points.size(); ++i) {
+            const PointRef ref{partial, kind, points.at(i).id};
+            movable[i] = points.at(i).timeMs > 0 && containsRef(selectedPoints_, ref);
+            hasMovableSelection |= movable[i];
+        }
+
+        for (qsizetype i = 0; i < points.size(); ++i) {
+            if (!movable.at(i))
+                continue;
+
+            qsizetype previous = i - 1;
+            while (previous >= 0 && movable.at(previous))
+                --previous;
+
+            qsizetype next = i + 1;
+            while (next < points.size() && movable.at(next))
+                ++next;
+
+            const int lowerBoundary =
+                previous >= 0 ? points.at(previous).timeMs + 1 : 1;
+            const int upperBoundary =
+                next < points.size() ? points.at(next).timeMs - 1 : 32766;
+
+            minimumDelta = std::max(minimumDelta,
+                                    lowerBoundary - points.at(i).timeMs);
+            maximumDelta = std::min(maximumDelta,
+                                    upperBoundary - points.at(i).timeMs);
+        }
+    }
+
+    if (!hasMovableSelection)
+        return 0;
+
+    return std::clamp(requestedDeltaTimeMs, minimumDelta, maximumDelta);
+}
+
+void HydraDocument::moveSelected(int deltaTimeMs,
+                                 int deltaDisplayValue,
+                                 TrackKind kind,
+                                 bool logicSnap)
 {
     if (deltaTimeMs == 0 && deltaDisplayValue == 0)
         return;
 
-    QSet<int> touchedPartials;
+    // A stroke click selects both tracks of a partial. Treat horizontal
+    // movement of such a selection as a true whole-partial translation:
+    // amplitude and frequency move together while their t=0 anchors stay put.
+    QSet<int> wholePartials;
+    for (int partial : std::as_const(selectedPartials_)) {
+        if (isWholePartialSelected(partial))
+            wholePartials.insert(partial);
+    }
+
     bool changed = false;
-    for (const auto& ref :  std::as_const(selectedPoints_)) {
+
+    if (deltaTimeMs != 0) {
+        for (int partial : std::as_const(wholePartials))
+            changed |= translateWholePartial(partial, deltaTimeMs);
+    }
+
+    int ordinaryDeltaTime = deltaTimeMs;
+    if (logicSnap)
+        ordinaryDeltaTime = snappedDeltaTime(deltaTimeMs, kind, wholePartials);
+
+    QSet<int> touchedPartials;
+
+    for (const auto& ref : std::as_const(selectedPoints_)) {
         if (ref.kind != kind)
             continue;
+
         Breakpoint* p = mutablePoint(ref);
         if (!p)
             continue;
 
         const int oldTime = p->timeMs;
         const int oldValue = p->value;
-        p->timeMs = std::clamp(p->timeMs + deltaTimeMs, 0, 32766);
 
-        if (kind == TrackKind::Amplitude) {
-            const double gain = partialGain(ref.partial);
-            if (gain > 0.000001) {
-                const int rawDelta = static_cast<int>(std::lround(deltaDisplayValue / gain));
-                p->value = std::clamp(p->value + rawDelta, 0, 32767);
+        // Whole-partial horizontal movement has already been applied to both
+        // tracks above. For normal point editing the t=0 anchor is permanent.
+        if (!wholePartials.contains(ref.partial) && p->timeMs > 0) {
+            p->timeMs = std::clamp(p->timeMs + ordinaryDeltaTime, 1, 32766);
+        }
+
+        if (deltaDisplayValue != 0) {
+            if (kind == TrackKind::Amplitude) {
+                const double gain = partialGain(ref.partial);
+                if (gain > 0.000001) {
+                    const int rawDelta =
+                        static_cast<int>(std::lround(deltaDisplayValue / gain));
+                    p->value = std::clamp(p->value + rawDelta, 0, 32767);
+                }
+            } else {
+                p->value = std::clamp(p->value + deltaDisplayValue, 0, 32767);
             }
-        } else {
-            p->value = std::clamp(p->value + deltaDisplayValue, 0, 32767);
         }
 
         changed |= (oldTime != p->timeMs || oldValue != p->value);
@@ -496,12 +718,18 @@ void HydraDocument::moveSelected(int deltaTimeMs, int deltaDisplayValue, TrackKi
     if (!changed)
         return;
 
-    for (int partial : touchedPartials) {
-        auto& points = mutableTrack(partial, kind);
-        std::stable_sort(points.begin(), points.end(),
-                         [](const Breakpoint& a, const Breakpoint& b) {
-                             return a.timeMs < b.timeMs;
-                         });
+    // Logic Snap preserves point topology. When it is disabled, keep the file
+    // valid by sorting crossed points into chronological order.
+    if (!logicSnap) {
+        for (int partial : std::as_const(touchedPartials)) {
+            if (wholePartials.contains(partial))
+                continue;
+            auto& points = mutableTrack(partial, kind);
+            std::stable_sort(points.begin(), points.end(),
+                             [](const Breakpoint& a, const Breakpoint& b) {
+                                 return a.timeMs < b.timeMs;
+                             });
+        }
     }
 
     setDirty(true);

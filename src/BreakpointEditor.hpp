@@ -28,6 +28,7 @@ class BreakpointEditor : public QQuickPaintedItem
     Q_OBJECT
     Q_PROPERTY(HydraDocument* document READ document WRITE setDocument NOTIFY documentChanged)
     Q_PROPERTY(int mode READ mode WRITE setMode NOTIFY modeChanged)
+    Q_PROPERTY(bool logicSnap READ logicSnap WRITE setLogicSnap NOTIFY logicSnapChanged)
 
 public:
     explicit BreakpointEditor(QQuickItem* parent = nullptr);
@@ -38,11 +39,15 @@ public:
     int mode() const { return static_cast<int>(mode_); }
     void setMode(int mode);
 
+    bool logicSnap() const { return logicSnap_; }
+    void setLogicSnap(bool enabled);
+
     void paint(QPainter* painter) override;
 
 signals:
     void documentChanged();
     void modeChanged();
+    void logicSnapChanged();
 
 protected:
     void mousePressEvent(QMouseEvent* event) override;
@@ -61,6 +66,7 @@ private:
 
     HydraDocument* document_ = nullptr;
     TrackKind mode_ = TrackKind::Amplitude;
+    bool logicSnap_ = true;
     bool draggingPoints_ = false;
     bool lassoing_ = false;
     QPointF lastMousePos_;
