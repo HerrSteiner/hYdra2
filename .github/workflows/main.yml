@@ -34,6 +34,7 @@ jobs:
           target: desktop
           modules: 'qtgraphs'
           cache: true
+          py7zrversion: '==1.1.0'
 
       - name: Configure
         run: >
