@@ -62,9 +62,12 @@ public:
     Q_INVOKABLE bool openUrl(const QUrl& url);
     Q_INVOKABLE bool save();
     Q_INVOKABLE bool saveAs(const QUrl& url, int formatIndex);
+    Q_INVOKABLE void normalizeAmplitudes();
 
     void setPartialGain(int partial, double gain);
+    void setPartialGains(const QVector<int>& partials, const QVector<double>& gains);
     void setPartialSelection(int partial, bool additive = false, bool toggle = false);
+    void selectWholePartial(int partial, bool additive = false, bool toggle = false);
     void setPointSelection(const QVector<PointRef>& refs, bool additive = false);
     void selectPoint(const PointRef& ref, bool additive = false, bool toggle = false);
     void clearSelection();

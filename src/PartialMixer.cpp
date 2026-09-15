@@ -20,6 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QtGui/QPainter>
 
 #include <algorithm>
+#include <utility>
 
 namespace hydra2 {
 
@@ -141,23 +142,31 @@ void PartialMixer::editAt(const QPointF& pos, Qt::KeyboardModifiers modifiers, b
         document_->setPartialSelection(p, additive, toggle);
     }
 
+    if (dragPartials_.isEmpty())
+        return;
+
     const QRectF r = innerRect();
-    const double naturalHeight = std::max(2.0, dragNaturalHeight_);
+    const double deltaHeight = pressPos_.y() - pos.y();
 
-    // The translucent slot represents the partial's original (1x) level.
-    // Allow the solid bar to be dragged above that level, up to the top
-    // of the mixer. HydraDocument applies the final safety clamp based
-    // on the partial's available amplitude headroom.
-    const double requestedHeight = std::clamp(
-        static_cast<double>(r.bottom() - pos.y()),
-        0.0,
-        static_cast<double>(r.height())
-    );
+    QVector<double> gains;
+    gains.reserve(dragPartials_.size());
 
-    double gain = requestedHeight / naturalHeight;
-    gain = std::min(gain, document_->partialMaximumGain(p));
+    for (qsizetype i = 0; i < dragPartials_.size(); ++i) {
+        const int partial = dragPartials_.at(i);
+        const double naturalHeight = std::max(2.0, dragNaturalHeights_.at(i));
+        const double startHeight = naturalHeight * dragStartGains_.at(i);
+        const double requestedHeight = std::clamp(
+            startHeight + deltaHeight,
+            0.0,
+            static_cast<double>(r.height())
+        );
 
-    document_->setPartialGain(p, gain);
+        double gain = requestedHeight / naturalHeight;
+        gain = std::min(gain, document_->partialMaximumGain(partial));
+        gains.push_back(gain);
+    }
+
+    document_->setPartialGains(dragPartials_, gains);
 }
 
 void PartialMixer::mousePressEvent(QMouseEvent* event)
@@ -171,19 +180,54 @@ void PartialMixer::mousePressEvent(QMouseEvent* event)
     pressPos_ = event->position();
     levelDragStarted_ = false;
 
-    // The raw partial averages do not change while a mixer gain is dragged,
-    // so calculate the slider's natural height only once per gesture.
-    double maxAverage = 1.0;
-    for (int i = 0; i < document_->partialCount(); ++i)
-        maxAverage = std::max(maxAverage, document_->partialAverageAmplitude(i));
-    const double average = document_->partialAverageAmplitude(draggingPartial_);
-    dragNaturalHeight_ = std::max(2.0, (average / maxAverage) * innerRect().height());
     const bool additive = event->modifiers().testFlag(Qt::ShiftModifier)
                        || event->modifiers().testFlag(Qt::ControlModifier)
                        || event->modifiers().testFlag(Qt::MetaModifier);
     const bool toggle = event->modifiers().testFlag(Qt::ControlModifier)
                      || event->modifiers().testFlag(Qt::MetaModifier);
-    document_->setPartialSelection(draggingPartial_, additive, toggle);
+
+    // Clicking one member of an existing multi-selection must not collapse
+    // the selection before a linked drag starts.
+    const bool alreadySelected =
+        document_->selectedPartials().contains(draggingPartial_);
+
+    if (additive || toggle) {
+        document_->setPartialSelection(draggingPartial_, additive, toggle);
+    } else if (!alreadySelected) {
+        document_->setPartialSelection(draggingPartial_, false, false);
+    }
+
+    // A Ctrl/Cmd-click may have toggled the clicked partial off. In that case
+    // the gesture is selection-only and does not start a level drag.
+    if (!document_->selectedPartials().contains(draggingPartial_)) {
+        draggingPartial_ = -1;
+        event->accept();
+        return;
+    }
+
+    // Cache the starting state for every selected slider. During the drag all
+    // slider tops move by the same number of pixels, preserving their visual
+    // relationship while still respecting each partial's own headroom.
+    double maxAverage = 1.0;
+    for (int i = 0; i < document_->partialCount(); ++i)
+        maxAverage = std::max(maxAverage, document_->partialAverageAmplitude(i));
+
+    dragPartials_ = document_->selectedPartials().values();
+    std::sort(dragPartials_.begin(), dragPartials_.end());
+
+    dragStartGains_.clear();
+    dragNaturalHeights_.clear();
+    dragStartGains_.reserve(dragPartials_.size());
+    dragNaturalHeights_.reserve(dragPartials_.size());
+
+    for (int partial : std::as_const(dragPartials_)) {
+        const double average = document_->partialAverageAmplitude(partial);
+        dragStartGains_.push_back(document_->partialGain(partial));
+        dragNaturalHeights_.push_back(
+            std::max(2.0, (average / maxAverage) * innerRect().height())
+        );
+    }
+
     event->accept();
 }
 
@@ -205,7 +249,9 @@ void PartialMixer::mouseReleaseEvent(QMouseEvent* event)
     Q_UNUSED(event);
     draggingPartial_ = -1;
     levelDragStarted_ = false;
-    dragNaturalHeight_ = 0.0;
+    dragPartials_.clear();
+    dragStartGains_.clear();
+    dragNaturalHeights_.clear();
 }
 
 } // namespace hydra2

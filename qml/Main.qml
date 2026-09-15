@@ -65,6 +65,13 @@ ApplicationWindow {
     }
 
     Action {
+        id: normalizeAmplitudesAction
+        text: qsTr("Normalize Amplitudes")
+        enabled: hydraDocument.loaded && window.editorMode === 0
+        onTriggered: hydraDocument.normalizeAmplitudes()
+    }
+
+    Action {
         id: aboutAction
         text: qsTr("About hYdra2")
         onTriggered: aboutDialog.open()
@@ -79,6 +86,11 @@ ApplicationWindow {
             MenuItem { action: saveAsAction }
             MenuSeparator { }
             MenuItem { action: quitAction }
+        }
+
+        Menu {
+            title: qsTr("Edit")
+            MenuItem { action: normalizeAmplitudesAction }
         }
 
         Menu {
@@ -218,7 +230,7 @@ ApplicationWindow {
             Label {
                 Layout.leftMargin: 12
                 Layout.topMargin: 6
-                text: qsTr("Partials — drag a bar vertically to attenuate; zero remains recoverable until save + reload")
+                text: qsTr("Partials — drag vertically to adjust level; selected bars move together")
                 color: "#c7cbd1"
             }
 

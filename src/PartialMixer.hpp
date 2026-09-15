@@ -53,7 +53,9 @@ private:
     int draggingPartial_ = -1;
     QPointF pressPos_;
     bool levelDragStarted_ = false;
-    double dragNaturalHeight_ = 0.0;
+    QVector<int> dragPartials_;
+    QVector<double> dragStartGains_;
+    QVector<double> dragNaturalHeights_;
 };
 
 } // namespace hydra2

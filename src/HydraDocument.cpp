@@ -255,19 +255,98 @@ HetFormat HydraDocument::formatForPath(const QString& path) const
     return HetFormat::CurrentText;
 }
 
+void HydraDocument::normalizeAmplitudes()
+{
+    int peak = 0;
+
+    // Normalize the raw amplitude breakpoints only. Mixer gains stay
+    // non-destructive, so a muted partial remains recoverable after Normalize.
+    for (const auto& partial : data_.partials) {
+        for (const auto& point : partial.amplitude)
+            peak = std::max(peak, point.value);
+    }
+
+    if (peak <= 0 || peak == 32767)
+        return;
+
+    const double scale = 32767.0 / static_cast<double>(peak);
+    bool changed = false;
+
+    for (int partialIndex = 0; partialIndex < data_.partials.size(); ++partialIndex) {
+        auto& partial = data_.partials[partialIndex];
+
+        for (auto& point : partial.amplitude) {
+            const int normalized = std::clamp(
+                static_cast<int>(std::lround(point.value * scale)),
+                0,
+                32767
+            );
+            changed |= (normalized != point.value);
+            point.value = normalized;
+        }
+
+        // Normalization may reduce the remaining amplification headroom.
+        // Keep the existing mixer setting when possible, but never leave a
+        // gain above the new legal maximum for this partial.
+        const double clampedGain = std::clamp(
+            partial.gain,
+            0.0,
+            partialMaximumGain(partialIndex)
+        );
+        if (!qFuzzyCompare(partial.gain + 1.0, clampedGain + 1.0)) {
+            partial.gain = clampedGain;
+            changed = true;
+        }
+    }
+
+    if (!changed)
+        return;
+
+    setDirty(true);
+    emit dataChanged();
+}
+
 void HydraDocument::setPartialGain(int partial, double gain)
 {
     if (partial < 0 || partial >= data_.partials.size())
         return;
-    gain = std::clamp(
-        gain,
-        0.0,
-        partialMaximumGain(partial)
-        );
+
+    gain = std::clamp(gain, 0.0, partialMaximumGain(partial));
     if (qFuzzyCompare(data_.partials.at(partial).gain + 1.0, gain + 1.0))
         return;
 
     data_.partials[partial].gain = gain;
+    setDirty(true);
+    emit dataChanged();
+}
+
+void HydraDocument::setPartialGains(const QVector<int>& partials,
+                                    const QVector<double>& gains)
+{
+    const qsizetype count = std::min(partials.size(), gains.size());
+    bool changed = false;
+
+    for (qsizetype i = 0; i < count; ++i) {
+        const int partial = partials.at(i);
+        if (partial < 0 || partial >= data_.partials.size())
+            continue;
+
+        const double gain = std::clamp(
+            gains.at(i),
+            0.0,
+            partialMaximumGain(partial)
+        );
+
+        if (qFuzzyCompare(data_.partials.at(partial).gain + 1.0, gain + 1.0))
+            continue;
+
+        data_.partials[partial].gain = gain;
+        changed = true;
+    }
+
+    if (!changed)
+        return;
+
     setDirty(true);
     emit dataChanged();
 }
@@ -290,6 +369,45 @@ void HydraDocument::setPartialSelection(int partial, bool additive, bool toggle)
     } else {
         selectedPartials_.insert(partial);
     }
+    emit selectionChanged();
+}
+
+void HydraDocument::selectWholePartial(int partial, bool additive, bool toggle)
+{
+    if (partial < 0 || partial >= data_.partials.size())
+        return;
+
+    const bool wasSelected = selectedPartials_.contains(partial);
+
+    if (!additive) {
+        selectedPartials_.clear();
+        selectedPoints_.clear();
+    }
+
+    if (toggle && wasSelected) {
+        selectedPartials_.remove(partial);
+        selectedPoints_.erase(std::remove_if(selectedPoints_.begin(), selectedPoints_.end(),
+                                             [&](const PointRef& ref) {
+                                                 return ref.partial == partial;
+                                             }),
+                              selectedPoints_.end());
+        emit selectionChanged();
+        return;
+    }
+
+    selectedPartials_.insert(partial);
+
+    const auto addTrack = [&](TrackKind kind) {
+        for (const auto& point : track(partial, kind)) {
+            const PointRef ref{partial, kind, point.id};
+            if (!containsRef(selectedPoints_, ref))
+                selectedPoints_.push_back(ref);
+        }
+    };
+
+    addTrack(TrackKind::Amplitude);
+    addTrack(TrackKind::Frequency);
+
     emit selectionChanged();
 }
 

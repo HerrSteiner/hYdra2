@@ -32,6 +32,32 @@ constexpr qreal kTop = 18.0;
 constexpr qreal kRight = 16.0;
 constexpr qreal kBottom = 38.0;
 constexpr qreal kHitRadius = 8.0;
+constexpr qreal kStrokeHitRadius = 5.0;
+
+double pointToSegmentDistanceSquared(const QPointF& point,
+                                     const QPointF& a,
+                                     const QPointF& b)
+{
+    const QPointF ab = b - a;
+    const QPointF ap = point - a;
+    const double lengthSquared = ab.x() * ab.x() + ab.y() * ab.y();
+
+    if (lengthSquared <= 0.0) {
+        const double dx = point.x() - a.x();
+        const double dy = point.y() - a.y();
+        return dx * dx + dy * dy;
+    }
+
+    const double projection = std::clamp(
+        (ap.x() * ab.x() + ap.y() * ab.y()) / lengthSquared,
+        0.0,
+        1.0
+    );
+    const QPointF nearest = a + ab * projection;
+    const double dx = point.x() - nearest.x();
+    const double dy = point.y() - nearest.y();
+    return dx * dx + dy * dy;
+}
 
 bool validRef(const PointRef& ref)
 {
@@ -250,6 +276,49 @@ PointRef BreakpointEditor::hitTest(const QPointF& pos) const
     return best;
 }
 
+int BreakpointEditor::hitTestStroke(const QPointF& pos) const
+{
+    if (!document_)
+        return -1;
+
+    const double duration = std::max(1, document_->durationMs());
+    const double yMaximum = maxY();
+    const double hitDistanceSquared = kStrokeHitRadius * kStrokeHitRadius;
+
+    int bestPartial = -1;
+    double bestDistance = hitDistanceSquared;
+
+    // As with point hit-testing, selected partials are checked last so they
+    // win close overlaps and remain easy to work with.
+    QVector<int> order;
+    order.reserve(document_->partialCount());
+    for (int p = 0; p < document_->partialCount(); ++p)
+        if (!document_->selectedPartials().contains(p))
+            order.push_back(p);
+    for (int p = 0; p < document_->partialCount(); ++p)
+        if (document_->selectedPartials().contains(p))
+            order.push_back(p);
+
+    for (int partial : order) {
+        const auto& points = document_->track(partial, mode_);
+        if (points.size() < 2)
+            continue;
+
+        QPointF previous = toScreen(partial, points.first(), duration, yMaximum);
+        for (qsizetype i = 1; i < points.size(); ++i) {
+            const QPointF current = toScreen(partial, points.at(i), duration, yMaximum);
+            const double distance = pointToSegmentDistanceSquared(pos, previous, current);
+            if (distance <= bestDistance) {
+                bestDistance = distance;
+                bestPartial = partial;
+            }
+            previous = current;
+        }
+    }
+
+    return bestPartial;
+}
+
 QVector<PointRef> BreakpointEditor::refsInside(const QRectF& rect) const
 {
     QVector<PointRef> refs;
@@ -311,13 +380,22 @@ void BreakpointEditor::mousePressEvent(QMouseEvent* event)
         draggingPoints_ = true;
         lassoing_ = false;
     } else {
-        if (!additive)
-            document_->clearSelection();
-        draggingPoints_ = false;
-        lassoing_ = true;
-        lassoStart_ = event->position();
-        lassoRect_ = QRectF(lassoStart_, lassoStart_);
-        activePoint_ = {};
+        const int strokePartial = hitTestStroke(event->position());
+
+        if (strokePartial >= 0) {
+            document_->selectWholePartial(strokePartial, additive, toggle);
+            activePoint_ = {};
+            draggingPoints_ = document_->selectedPartials().contains(strokePartial);
+            lassoing_ = false;
+        } else {
+            if (!additive)
+                document_->clearSelection();
+            draggingPoints_ = false;
+            lassoing_ = true;
+            lassoStart_ = event->position();
+            lassoRect_ = QRectF(lassoStart_, lassoStart_);
+            activePoint_ = {};
+        }
     }
     update();
     event->accept();
