@@ -511,6 +511,19 @@ void BreakpointGraphModel::clearSelection()
     updateActiveLabel();
 }
 
+void BreakpointGraphModel::selectPartial(int partial, int modifiers)
+{
+    if (!document_ || partial < 0 || partial >= document_->partialCount())
+        return;
+
+    const auto mods = toModifiers(modifiers);
+    document_->selectWholePartial(partial,
+                                  additiveFromModifiers(mods),
+                                  toggleFromModifiers(mods));
+    activePoint_ = {};
+    updateActiveLabel();
+}
+
 void BreakpointGraphModel::rebuildModels()
 {
     beginResetModel();

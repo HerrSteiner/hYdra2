@@ -15,6 +15,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "BreakpointEditor.hpp"
 #include "BreakpointGraphModel.hpp"
 #include "HydraDocument.hpp"
 #include "PartialMixer.hpp"
@@ -31,6 +32,7 @@ int main(int argc, char* argv[])
     QGuiApplication::setOrganizationName(QStringLiteral("mobileart.org"));
     QGuiApplication::setApplicationVersion(QStringLiteral(HYDRA2_VERSION));
 
+    qmlRegisterType<hydra2::BreakpointEditor>("Hydra2.Native", 1, 0, "BreakpointEditor");
     qmlRegisterType<hydra2::BreakpointGraphModel>("Hydra2.Native", 1, 0, "BreakpointGraphModel");
     qmlRegisterType<hydra2::PartialMixer>("Hydra2.Native", 1, 0, "PartialMixer");
 

@@ -148,6 +148,7 @@ public:
                                   bool logicSnap);
     Q_INVOKABLE void endDrag();
     Q_INVOKABLE void clearSelection();
+    Q_INVOKABLE void selectPartial(int partial, int modifiers);
 
 signals:
     void documentChanged();

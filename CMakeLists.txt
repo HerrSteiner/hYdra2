@@ -29,6 +29,8 @@ target_link_libraries(hydra2_core PUBLIC Qt6::Core)
 qt_add_executable(hydra2
     MACOSX_BUNDLE
     src/main.cpp
+    src/BreakpointEditor.cpp
+    src/BreakpointEditor.hpp
     src/BreakpointGraphModel.cpp
     src/BreakpointGraphModel.hpp
     src/PartialMixer.cpp
@@ -53,6 +55,7 @@ qt_add_qml_module(hydra2
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        qml/Overview3D.qml
 )
 
 set_target_properties(hydra2 PROPERTIES
