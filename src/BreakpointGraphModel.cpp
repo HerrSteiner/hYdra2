@@ -16,6 +16,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include "BreakpointGraphModel.hpp"
 
+#include <QtCore/QPointF>
 #include <QtCore/QVariant>
 #include <QtGui/QVector3D>
 
@@ -375,6 +376,98 @@ bool BreakpointGraphModel::beginPartialDrag(int partial,
     dragging_ = document_->selectedPartials().contains(partial);
     updateActiveLabel();
     return dragging_;
+}
+
+bool BreakpointGraphModel::beginFrontPick(double graphX,
+                                          double graphY,
+                                          double viewWidth,
+                                          double viewHeight,
+                                          double cameraZoomLevel,
+                                          int modifiers,
+                                          bool logicSnap)
+{
+    if (!document_ || viewWidth <= 1.0 || viewHeight <= 1.0)
+        return false;
+
+    // graphPositionQuery returns normalized graph coordinates in [-1, 1].
+    // In FrontLow orthographic view Z is purely display depth, so the nearest
+    // editable item is determined from X/Y exactly like the old 2D editor.
+    if (graphX < -1.05 || graphX > 1.05 || graphY < -1.05 || graphY > 1.05)
+        return false;
+
+    const double zoom = std::max(1.0, cameraZoomLevel) / 100.0;
+    const double sx = 0.5 * viewWidth * zoom;
+    const double sy = 0.5 * viewHeight * zoom;
+    constexpr double pointRadius = 10.0;
+    constexpr double lineRadius = 6.0;
+
+    int bestPartial = -1;
+    int bestPoint = -1;
+    double bestPointDistance2 = pointRadius * pointRadius;
+
+    const auto normalizedPoint = [&](int partial, const Breakpoint& point) {
+        const double x = 2.0 * (static_cast<double>(point.timeMs) / durationMs_) - 1.0;
+        const double yValue = document_->displayValue(partial, mode_, point);
+        const double y = 2.0 * (yValue / maximumY_) - 1.0;
+        return QPointF((x - graphX) * sx, (y - graphY) * sy);
+    };
+
+    // Handles have priority over strokes. Prefer an already-selected partial
+    // if two front-projected points overlap almost exactly.
+    for (int partial = 0; partial < document_->partialCount(); ++partial) {
+        const auto& points = document_->track(partial, mode_);
+        for (qsizetype i = 0; i < points.size(); ++i) {
+            const QPointF p = normalizedPoint(partial, points.at(i));
+            const double d2 = p.x() * p.x() + p.y() * p.y();
+            if (d2 > bestPointDistance2)
+                continue;
+
+            const bool prefer = bestPartial < 0
+                || d2 < bestPointDistance2 - 0.25
+                || (std::abs(d2 - bestPointDistance2) <= 0.25
+                    && document_->selectedPartials().contains(partial)
+                    && !document_->selectedPartials().contains(bestPartial));
+            if (prefer) {
+                bestPointDistance2 = d2;
+                bestPartial = partial;
+                bestPoint = static_cast<int>(i);
+            }
+        }
+    }
+
+    if (bestPoint >= 0)
+        return beginPointDrag(bestPartial, bestPoint, modifiers, logicSnap);
+
+    int bestLinePartial = -1;
+    double bestLineDistance2 = lineRadius * lineRadius;
+
+    for (int partial = 0; partial < document_->partialCount(); ++partial) {
+        const auto& points = document_->track(partial, mode_);
+        if (points.size() < 2)
+            continue;
+
+        QPointF a = normalizedPoint(partial, points.first());
+        for (qsizetype i = 1; i < points.size(); ++i) {
+            const QPointF b = normalizedPoint(partial, points.at(i));
+            const QPointF ab = b - a;
+            const double length2 = ab.x() * ab.x() + ab.y() * ab.y();
+            double t = 0.0;
+            if (length2 > 1.0e-9)
+                t = std::clamp(-(a.x() * ab.x() + a.y() * ab.y()) / length2, 0.0, 1.0);
+            const QPointF closest = a + ab * t;
+            const double d2 = closest.x() * closest.x() + closest.y() * closest.y();
+            if (d2 < bestLineDistance2) {
+                bestLineDistance2 = d2;
+                bestLinePartial = partial;
+            }
+            a = b;
+        }
+    }
+
+    if (bestLinePartial >= 0)
+        return beginPartialDrag(bestLinePartial, modifiers, logicSnap);
+
+    return false;
 }
 
 void BreakpointGraphModel::dragByPixels(double deltaX,

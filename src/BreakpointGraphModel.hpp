@@ -130,6 +130,16 @@ public:
     Q_INVOKABLE bool beginPartialDrag(int partial,
                                       int modifiers,
                                       bool logicSnap);
+    // Deterministic hit testing for the orthographic front view. Qt Graphs
+    // native picking is retained for rotated 3D views, but front editing can
+    // be resolved directly from the graph-coordinate query.
+    Q_INVOKABLE bool beginFrontPick(double graphX,
+                                    double graphY,
+                                    double viewWidth,
+                                    double viewHeight,
+                                    double cameraZoomLevel,
+                                    int modifiers,
+                                    bool logicSnap);
     Q_INVOKABLE void dragByPixels(double deltaX,
                                   double deltaY,
                                   double viewWidth,

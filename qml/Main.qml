@@ -37,12 +37,18 @@ ApplicationWindow {
 
     function partialCategories(count) {
         let categories = []
-        const step = Math.max(1, Math.ceil(count / 16))
-        for (let i = 0; i < count; ++i) {
-            const show = (i % step) === 0 || i === count - 1
-            categories.push(show ? String(i + 1) : "")
-        }
+        for (let i = 0; i < count; ++i)
+            categories.push("")
         return categories
+    }
+
+    function partialLabelStep(count) {
+        return Math.max(1, Math.ceil(count / 16))
+    }
+
+    function showPartialLabel(index, count) {
+        const step = partialLabelStep(count)
+        return (index % step) === 0 || index === count - 1
     }
 
     function clampGraphTarget(value) {
@@ -50,9 +56,11 @@ ApplicationWindow {
     }
 
     function depthAspectRatio(count) {
-        // Keep roughly the same visible lane spacing as the number of
-        // partials grows. horizontalAspectRatio is X-size / Z-size.
-        return Math.max(0.25, Math.min(4.0, 32.0 / Math.max(1, count)))
+        // X must remain the longest horizontal axis so Front uses the full
+        // editor width. Give larger analyses progressively more Z depth, but
+        // never let depth become physically longer than X.
+        return Math.max(1.25, Math.min(12.0,
+                        16.0 / Math.sqrt(Math.max(1, count))))
     }
 
     BreakpointGraphModel {
@@ -256,6 +264,22 @@ ApplicationWindow {
             Layout.fillHeight: true
             Layout.minimumHeight: 300
 
+            // Qt Graphs keeps a separate primary 3D sub-viewport. Its default
+            // is only a fraction of the available viewport, so explicitly keep
+            // it synchronized with this editor area (in device pixels).
+            function syncGraphViewport() {
+                if (!breakpointGraph.scene)
+                    return
+                const dpr = Math.max(1.0, breakpointGraph.scene.devicePixelRatio)
+                breakpointGraph.scene.primarySubViewport = Qt.rect(
+                    0, 0,
+                    Math.max(1, Math.round(width * dpr)),
+                    Math.max(1, Math.round(height * dpr)))
+            }
+
+            onWidthChanged: syncGraphViewport()
+            onHeightChanged: syncGraphViewport()
+
             Rectangle {
                 anchors.fill: parent
                 color: "#181a1d"
@@ -263,8 +287,14 @@ ApplicationWindow {
 
             Scatter3D {
                 id: breakpointGraph
-                anchors.fill: parent
-                anchors.margins: 4
+
+                // Scatter3D is documented by Qt as a Qt Quick graph item with
+                // width/height. Qt Creator 6.11 currently reports M16 for these
+                // inherited properties, so suppress that tooling false-positive.
+                // qmllint disable
+                width: Math.max(1, editor.width)
+                height: Math.max(1, editor.height)
+                // qmllint enable
 
                 // The partial index is display-only depth. Data editing never
                 // modifies Z; left-drag always changes time/value only.
@@ -299,14 +329,18 @@ ApplicationWindow {
 
                 orthoProjection: true
                 cameraPreset: Graphs3D.CameraPreset.FrontLow
-                cameraZoomLevel: 92
+                cameraZoomLevel: 100
                 minCameraZoomLevel: 25
                 maxCameraZoomLevel: 500
                 // Each partial owns a fixed Z lane. Increase physical depth as
                 // more lanes are added, so neighboring partials remain visibly
                 // separated after the user rotates the graph.
                 horizontalAspectRatio: window.depthAspectRatio(hydraDocument.partialCount)
-                aspectRatio: 2.2
+                // Match X/Y physical scaling to the actual editor rectangle.
+                // This makes Front fill the available area and react to window
+                // resizing like the former 2D painter implementation.
+                aspectRatio: Math.max(0.25, editor.width / Math.max(1.0, editor.height))
+                margin: 0.04
                 rotationEnabled: true
                 zoomEnabled: true
                 zoomAtTargetEnabled: false
@@ -341,7 +375,10 @@ ApplicationWindow {
                     multiHighlightColor: "#4eb5ff"
                 }
 
-                Component.onCompleted: setDragButton(Qt.RightButton)
+                Component.onCompleted: {
+                    setDragButton(Qt.RightButton)
+                    editor.syncGraphViewport()
+                }
 
                 // doPicking() completes asynchronously. The edit overlay stores
                 // the press state and handles the result here.
@@ -431,7 +468,7 @@ ApplicationWindow {
             // camera rotation; wheel events are also passed through for zoom.
             MouseArea {
                 id: breakpointEditArea
-                anchors.fill: breakpointGraph
+                anchors.fill: parent
                 acceptedButtons: Qt.LeftButton | Qt.MiddleButton
                 hoverEnabled: true
                 preventStealing: true
@@ -445,6 +482,11 @@ ApplicationWindow {
                 property real pendingZoom: 0.0
                 property real pendingOldZoom: 0.0
 
+                function isFrontView() {
+                    return Math.abs(breakpointGraph.cameraXRotation) < 0.1
+                        && Math.abs(breakpointGraph.cameraYRotation) < 0.1
+                }
+
                 // Picking in a large 3D graph can complete on a later render
                 // pass. Keep a generous empty-space fallback instead of the old
                 // 40 ms timeout, which could beat a valid GPU pick.
@@ -455,17 +497,10 @@ ApplicationWindow {
                     onTriggered: breakpointEditArea.completePick()
                 }
 
-                // graphPositionQuery is resolved during the next render pass.
-                // It gives us the point underneath the mouse so wheel zoom can
-                // preserve that point's screen position instead of zooming at
-                // the graph center.
-                Timer {
-                    id: zoomQueryTimer
-                    interval: 16
-                    repeat: false
-                    onTriggered: breakpointEditArea.applyPendingZoom()
-                }
-
+                // graphPositionQuery is asynchronous and completes on a render
+                // pass. The Connections object below waits for Scene3D to reset
+                // graphPositionQuery to invalidSelectionPoint, which Qt does
+                // after the result has been written to queriedGraphPosition.
                 function completePick() {
                     if (!pendingPick)
                         return
@@ -549,9 +584,13 @@ ApplicationWindow {
                     }
 
                     pendingModifiers = mouse.modifiers
-                    pendingPick = false
-                    breakpointGraph.clearSelection()
                     pendingPick = true
+                    breakpointGraph.clearSelection()
+
+                    // This is the same custom-input pattern used by Qt's
+                    // official Axis Handling example. MouseArea owns the left
+                    // click and explicitly asks Scatter3D to pick at that view
+                    // coordinate.
                     pickFallback.restart()
                     breakpointGraph.doPicking(Qt.point(mouse.x, mouse.y))
                 }
@@ -608,15 +647,28 @@ ApplicationWindow {
                     if (rawDelta === 0)
                         return
 
-                    pendingOldZoom = breakpointGraph.cameraZoomLevel
+                    const oldZoom = Math.max(1.0, breakpointGraph.cameraZoomLevel)
                     const factor = Math.pow(1.001, rawDelta)
-                    pendingZoom = Math.max(
+                    const newZoom = Math.max(
                         breakpointGraph.minCameraZoomLevel,
                         Math.min(breakpointGraph.maxCameraZoomLevel,
-                                 pendingOldZoom * factor))
+                                 oldZoom * factor))
 
-                    breakpointGraph.scene.graphPositionQuery = Qt.point(wheel.x, wheel.y)
-                    zoomQueryTimer.restart()
+                    // For the orthographic Front view, move the camera target
+                    // toward the cursor while zooming. In rotated 3D views the
+                    // graph still zooms around its current target.
+                    if (isFrontView()) {
+                        const zoomFactor = newZoom / oldZoom
+                        const qx = (wheel.x / Math.max(1.0, width)) * 2.0 - 1.0
+                        const qy = 1.0 - (wheel.y / Math.max(1.0, height)) * 2.0
+                        const t = breakpointGraph.cameraTargetPosition
+                        breakpointGraph.cameraTargetPosition = Qt.vector3d(
+                            window.clampGraphTarget(qx - (qx - t.x) / zoomFactor),
+                            window.clampGraphTarget(qy - (qy - t.y) / zoomFactor),
+                            t.z)
+                    }
+
+                    breakpointGraph.cameraZoomLevel = newZoom
                     wheel.accepted = true
                 }
             }
@@ -653,7 +705,7 @@ ApplicationWindow {
                     onClicked: {
                         breakpointGraph.cameraPreset = Graphs3D.CameraPreset.FrontLow
                         breakpointGraph.cameraTargetPosition = Qt.vector3d(0, 0, 0)
-                        breakpointGraph.cameraZoomLevel = 92
+                        breakpointGraph.cameraZoomLevel = 100
                     }
                 }
             }
@@ -688,7 +740,7 @@ ApplicationWindow {
                     anchors.fill: parent
                     anchors.leftMargin: 8
                     anchors.rightMargin: 8
-                    anchors.bottomMargin: 4
+                    anchors.bottomMargin: 20
                     marginLeft: 4
                     marginRight: 4
                     marginTop: 4
@@ -708,13 +760,14 @@ ApplicationWindow {
                     }
 
                     axisX: BarCategoryAxis {
+                        // Keep one category per bar, but draw our own labels below
+                        // the plot area so their centers align exactly with bars.
                         categories: window.partialCategories(hydraDocument.partialCount)
-                        labelsVisible: true
+                        visible: false
+                        labelsVisible: false
                         lineVisible: false
                         gridVisible: false
                         subGridVisible: false
-                        color: "transparent"
-                        subColor: "transparent"
                     }
                     axisY: ValueAxis {
                         min: 0
@@ -748,6 +801,28 @@ ApplicationWindow {
                             color: "#b2bbc7"
                             selectedColor: "#4eb5ff"
                         }
+                    }
+                }
+
+                Repeater {
+                    model: hydraDocument.partialCount
+
+                    delegate: Label {
+                        required property int index
+                        visible: window.showPartialLabel(index, hydraDocument.partialCount)
+                        width: 34
+                        height: 16
+                        x: mixerGraph.x + mixerGraph.plotArea.x
+                           + ((index + 0.5) / Math.max(1, hydraDocument.partialCount))
+                             * mixerGraph.plotArea.width
+                           - width / 2
+                        y: mixerGraph.y + mixerGraph.plotArea.y
+                           + mixerGraph.plotArea.height + 2
+                        text: String(index + 1)
+                        color: "#bec3cb"
+                        font.pixelSize: 10
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignTop
                     }
                 }
 
