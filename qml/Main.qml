@@ -37,9 +37,16 @@ ApplicationWindow {
 
     function partialCategories(count) {
         let categories = []
-        for (let i = 0; i < count; ++i)
-            categories.push(String(i + 1))
+        const step = Math.max(1, Math.ceil(count / 16))
+        for (let i = 0; i < count; ++i) {
+            const show = (i % step) === 0 || i === count - 1
+            categories.push(show ? String(i + 1) : "")
+        }
         return categories
+    }
+
+    function clampGraphTarget(value) {
+        return Math.max(-1.0, Math.min(1.0, value))
     }
 
     function depthAspectRatio(count) {
@@ -302,7 +309,13 @@ ApplicationWindow {
                 aspectRatio: 2.2
                 rotationEnabled: true
                 zoomEnabled: true
-                zoomAtTargetEnabled: true
+                zoomAtTargetEnabled: false
+                // Flat technical drawing: no directional/specular shading.
+                // Ambient light at full strength keeps the configured colors
+                // uniform while the per-series Unshaded mode removes highlights.
+                ambientLightStrength: 1.0
+                lightStrength: 0.0
+                shadowStrength: 0.0
                 selectionEnabled: true
                 // MultiSeries is not supported by Scatter3D. hYdra2 keeps its
                 // own multi-selection and draws it using selectedPointSeries.
@@ -333,6 +346,7 @@ ApplicationWindow {
                 // doPicking() completes asynchronously. The edit overlay stores
                 // the press state and handles the result here.
                 onSelectedElementChanged: breakpointEditArea.completePick()
+                onSelectedSeriesChanged: breakpointEditArea.completePick()
 
                 // Bright overlay for all selected breakpoints. It is a separate
                 // scatter series because Qt Graphs natively highlights only one
@@ -342,10 +356,16 @@ ApplicationWindow {
                     property bool hydraSelectionOverlay: true
                     baseColor: "#ffd640"
                     singleHighlightColor: "#fff0a0"
-                    itemSize: 0.012
+                    itemSize: 0.018
                     mesh: Abstract3DSeries.Mesh.Cube
                     meshSmooth: false
+                    lightingMode: Abstract3DSeries.LightingMode.Unshaded
                     itemLabelVisible: false
+                    onSelectedItemChanged: {
+                        if (breakpointEditArea.pendingPick
+                                && selectedItem !== invalidSelectionIndex)
+                            breakpointEditArea.completePick()
+                    }
                     dataProxy: ItemModelScatterDataProxy {
                         itemModel: breakpointGraphModel.selectedPointModel
                         xPosRole: "xPos"
@@ -370,9 +390,10 @@ ApplicationWindow {
                         splineColor: partialSelected ? "#4eb5ff" : "#68717c"
                         singleHighlightColor: "#ffd640"
                         multiHighlightColor: "#4eb5ff"
-                        itemSize: partialSelected ? 0.010 : 0.007
+                        itemSize: partialSelected ? 0.015 : 0.011
                         mesh: Abstract3DSeries.Mesh.Cube
                         meshSmooth: false
+                        lightingMode: Abstract3DSeries.LightingMode.Unshaded
                         splineVisible: true
                         splineTension: 1.0
                         splineResolution: 3
@@ -380,6 +401,12 @@ ApplicationWindow {
                         // hYdra2 draws its own compact value label, avoiding
                         // one floating 3D label allocation per native selection.
                         itemLabelVisible: false
+
+                        onSelectedItemChanged: {
+                            if (breakpointEditArea.pendingPick
+                                    && selectedItem !== invalidSelectionIndex)
+                                breakpointEditArea.completePick()
+                        }
 
                         dataProxy: ItemModelScatterDataProxy {
                             itemModel: pointModel
@@ -405,36 +432,57 @@ ApplicationWindow {
             MouseArea {
                 id: breakpointEditArea
                 anchors.fill: breakpointGraph
-                acceptedButtons: Qt.LeftButton
+                acceptedButtons: Qt.LeftButton | Qt.MiddleButton
                 hoverEnabled: true
                 preventStealing: true
 
                 property point lastPos: Qt.point(0, 0)
                 property bool dataDrag: false
+                property bool panDrag: false
                 property bool pressHeld: false
                 property bool pendingPick: false
                 property int pendingModifiers: Qt.NoModifier
+                property real pendingZoom: 0.0
+                property real pendingOldZoom: 0.0
 
+                // Picking in a large 3D graph can complete on a later render
+                // pass. Keep a generous empty-space fallback instead of the old
+                // 40 ms timeout, which could beat a valid GPU pick.
                 Timer {
                     id: pickFallback
-                    interval: 40
+                    interval: 300
                     repeat: false
                     onTriggered: breakpointEditArea.completePick()
+                }
+
+                // graphPositionQuery is resolved during the next render pass.
+                // It gives us the point underneath the mouse so wheel zoom can
+                // preserve that point's screen position instead of zooming at
+                // the graph center.
+                Timer {
+                    id: zoomQueryTimer
+                    interval: 16
+                    repeat: false
+                    onTriggered: breakpointEditArea.applyPendingZoom()
                 }
 
                 function completePick() {
                     if (!pendingPick)
                         return
 
-                    pendingPick = false
-                    pickFallback.stop()
-
                     const series = breakpointGraph.selectedSeries
                     if (breakpointGraph.selectedElement !== Graphs3D.ElementType.Series || !series) {
+                        // A miss is only final when the fallback timer fires.
+                        if (pickFallback.running)
+                            return
+                        pendingPick = false
                         if (!(pendingModifiers & (Qt.ShiftModifier | Qt.ControlModifier | Qt.MetaModifier)))
                             breakpointGraphModel.clearSelection()
                         return
                     }
+
+                    pendingPick = false
+                    pickFallback.stop()
 
                     const selectedIndex = series.selectedItem
                     let started = false
@@ -448,8 +496,8 @@ ApplicationWindow {
                         started = breakpointGraphModel.beginPointDrag(
                             series.partialIndex, selectedIndex, pendingModifiers, window.logicSnap)
                     } else {
-                        // Some Qt Graphs backends report a spline hit without a
-                        // selected control point. Treat that as a whole-partial hit.
+                        // If the backend identifies the spline series without a
+                        // control point, treat it as a whole-partial selection.
                         started = breakpointGraphModel.beginPartialDrag(
                             series.partialIndex, pendingModifiers, window.logicSnap)
                     }
@@ -459,14 +507,48 @@ ApplicationWindow {
                         breakpointGraphModel.endDrag()
                 }
 
+                function applyPendingZoom() {
+                    if (pendingZoom <= 0.0)
+                        return
+
+                    const oldZoom = Math.max(1.0, pendingOldZoom)
+                    const newZoom = pendingZoom
+                    const factor = newZoom / oldZoom
+                    const q = breakpointGraph.queriedGraphPosition
+                    const t = breakpointGraph.cameraTargetPosition
+
+                    if (q.x >= -1.0 && q.x <= 1.0
+                            && q.y >= -1.0 && q.y <= 1.0
+                            && q.z >= -1.0 && q.z <= 1.0) {
+                        // Keep q at the same screen position after the zoom:
+                        // (q - newTarget) * newZoom == (q - oldTarget) * oldZoom
+                        breakpointGraph.cameraTargetPosition = Qt.vector3d(
+                            window.clampGraphTarget(q.x - (q.x - t.x) / factor),
+                            window.clampGraphTarget(q.y - (q.y - t.y) / factor),
+                            window.clampGraphTarget(q.z - (q.z - t.z) / factor))
+                    }
+
+                    breakpointGraph.cameraZoomLevel = newZoom
+                    pendingZoom = 0.0
+                }
+
                 onPressed: function(mouse) {
                     lastPos = Qt.point(mouse.x, mouse.y)
                     dataDrag = false
                     pressHeld = true
-                    pendingModifiers = mouse.modifiers
 
-                    // Clear only Qt Graphs' native single selection. hYdra2's
-                    // own document selection (and yellow overlay) stays intact.
+                    // Option-left or middle mouse pans the camera target. This
+                    // moves the view only; no breakpoint coordinates change.
+                    panDrag = mouse.button === Qt.MiddleButton
+                           || (mouse.button === Qt.LeftButton
+                               && (mouse.modifiers & Qt.AltModifier))
+                    if (panDrag) {
+                        pendingPick = false
+                        pickFallback.stop()
+                        return
+                    }
+
+                    pendingModifiers = mouse.modifiers
                     pendingPick = false
                     breakpointGraph.clearSelection()
                     pendingPick = true
@@ -475,14 +557,28 @@ ApplicationWindow {
                 }
 
                 onPositionChanged: function(mouse) {
-                    if (!pressed || !dataDrag)
+                    if (!pressed)
                         return
 
-                    // Editing is deliberately 2D even after rotating the camera:
-                    // horizontal mouse movement changes X/time, vertical movement
-                    // changes Y/value. Z is the immutable partial lane.
                     const dx = mouse.x - lastPos.x
                     const dy = mouse.y - lastPos.y
+
+                    if (panDrag) {
+                        const scale = 100.0 / Math.max(1.0, breakpointGraph.cameraZoomLevel)
+                        const t = breakpointGraph.cameraTargetPosition
+                        breakpointGraph.cameraTargetPosition = Qt.vector3d(
+                            window.clampGraphTarget(t.x - dx * 2.0 / width * scale),
+                            window.clampGraphTarget(t.y + dy * 2.0 / height * scale),
+                            t.z)
+                        lastPos = Qt.point(mouse.x, mouse.y)
+                        return
+                    }
+
+                    if (!dataDrag)
+                        return
+
+                    // Editing remains 2D even with a rotated camera: mouse X
+                    // changes time, mouse Y changes value, and Z is immutable.
                     breakpointGraphModel.dragByPixels(
                         dx, dy, width, height,
                         breakpointGraph.cameraZoomLevel, window.logicSnap)
@@ -491,12 +587,14 @@ ApplicationWindow {
 
                 onReleased: function(mouse) {
                     pressHeld = false
+                    panDrag = false
                     breakpointGraphModel.endDrag()
                     dataDrag = false
                 }
 
                 onCanceled: {
                     pressHeld = false
+                    panDrag = false
                     pendingPick = false
                     pickFallback.stop()
                     breakpointGraphModel.endDrag()
@@ -504,8 +602,22 @@ ApplicationWindow {
                 }
 
                 onWheel: function(wheel) {
-                    // Leave wheel/pinch zoom to Qt Graphs.
-                    wheel.accepted = false
+                    const rawDelta = wheel.angleDelta.y !== 0
+                                   ? wheel.angleDelta.y
+                                   : wheel.pixelDelta.y * 2.0
+                    if (rawDelta === 0)
+                        return
+
+                    pendingOldZoom = breakpointGraph.cameraZoomLevel
+                    const factor = Math.pow(1.001, rawDelta)
+                    pendingZoom = Math.max(
+                        breakpointGraph.minCameraZoomLevel,
+                        Math.min(breakpointGraph.maxCameraZoomLevel,
+                                 pendingOldZoom * factor))
+
+                    breakpointGraph.scene.graphPositionQuery = Qt.point(wheel.x, wheel.y)
+                    zoomQueryTimer.restart()
+                    wheel.accepted = true
                 }
             }
 
@@ -531,7 +643,7 @@ ApplicationWindow {
 
                 Label {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: qsTr("Left drag: edit X/Y   Right drag: rotate   Wheel: zoom")
+                    text: qsTr("Left: edit   Option/middle: pan   Right: rotate   Wheel: zoom")
                     color: "#9299a3"
                     font.pixelSize: 11
                 }
@@ -540,6 +652,7 @@ ApplicationWindow {
                     text: qsTr("Front")
                     onClicked: {
                         breakpointGraph.cameraPreset = Graphs3D.CameraPreset.FrontLow
+                        breakpointGraph.cameraTargetPosition = Qt.vector3d(0, 0, 0)
                         breakpointGraph.cameraZoomLevel = 92
                     }
                 }
@@ -596,16 +709,17 @@ ApplicationWindow {
 
                     axisX: BarCategoryAxis {
                         categories: window.partialCategories(hydraDocument.partialCount)
-                        labelsVisible: false
+                        labelsVisible: true
                         lineVisible: false
                         gridVisible: false
+                        subGridVisible: false
+                        color: "transparent"
+                        subColor: "transparent"
                     }
                     axisY: ValueAxis {
                         min: 0
                         max: 1
-                        labelsVisible: false
-                        lineVisible: false
-                        gridVisible: false
+                        visible: false
                     }
 
                     BarSeries {
