@@ -442,7 +442,7 @@ QSGNode* BreakpointEditor::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData
                 const QColor fill = selectedPoint
                     ? QColor(255, 214, 64)
                     : (selectedPartial ? QColor(78, 181, 255, 220)
-                                       : QColor(32, 35, 40));
+                                       : QColor(150, 158,170,140));
                 addRect(vertices, QRectF(pos.x() - half, pos.y() - half,
                                          half * 2.0, half * 2.0), fill);
             }

@@ -129,7 +129,7 @@ Window {
             baseColor: partialSelected ? "#4eb5ff" : "#68717c"
             splineColor: partialSelected ? "#4eb5ff" : "#68717c"
             singleHighlightColor: "#ffd640"
-            itemSize: partialSelected ? 0.012 : 0.008
+            itemSize: partialSelected ? 0.02 : 0.018 // the size of the breakpoints
             mesh: Abstract3DSeries.Mesh.Cube
             meshSmooth: false
             lightingMode: Abstract3DSeries.LightingMode.Unshaded

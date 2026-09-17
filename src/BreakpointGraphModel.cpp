@@ -27,7 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 namespace hydra2 {
 namespace {
 
-constexpr double kDepthSpacing = 1.0;
+constexpr double kDepthSpacing = 2.0;
 
 Qt::KeyboardModifiers toModifiers(int value)
 {
