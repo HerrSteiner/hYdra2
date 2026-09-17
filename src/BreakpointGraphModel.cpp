@@ -101,18 +101,15 @@ void TrackPointModel::setKind(TrackKind kind)
 
 void TrackPointModel::refresh()
 {
+    // ItemModelScatterDataProxy does not reliably rebuild an existing
+    // Spline3DSeries immediately from QAbstractItemModel::dataChanged().
+    // Reset only this partial's point model so Qt Graphs re-reads all
+    // coordinates and uploads the changed spline geometry at once.
     const int newCount = document_ ? document_->track(partial_, kind_).size() : 0;
-    if (newCount != rowCountCache_) {
-        beginResetModel();
-        rowCountCache_ = newCount;
-        endResetModel();
-        return;
-    }
 
-    if (newCount > 0) {
-        emit dataChanged(index(0, 0), index(newCount - 1, 0),
-                         {XPosRole, YPosRole});
-    }
+    beginResetModel();
+    rowCountCache_ = newCount;
+    endResetModel();
 }
 
 quint64 TrackPointModel::pointIdAt(int row) const
@@ -553,7 +550,13 @@ void BreakpointGraphModel::refreshPartials(const QVector<int>& partials)
         if (partial >= 0 && partial < pointModels_.size())
             pointModels_.at(partial)->refresh();
     }
+
     selectedPoints_.rebuild(document_.data(), mode_);
+
+    // A breakpoint move can change the analysis duration, and frequency edits
+    // can change the Y range. Keep the 3D axes synchronized as well.
+    recalculateRanges();
+    emit graphChanged();
 }
 
 void BreakpointGraphModel::refreshSelection()
