@@ -330,6 +330,8 @@ bool BreakpointGraphModel::beginPointDrag(int partial,
         document_->selectPoint(ref, additiveFromModifiers(mods), toggle);
 
     dragging_ = document_->isPointSelected(ref);
+    if (dragging_)
+        document_->beginEditTransaction(QStringLiteral("Move breakpoints"));
     updateActiveLabel();
     return dragging_;
 }
@@ -354,6 +356,8 @@ bool BreakpointGraphModel::beginSelectedPointDrag(int selectedIndex,
         document_->selectPoint(ref, additiveFromModifiers(mods), toggle);
 
     dragging_ = document_->isPointSelected(ref);
+    if (dragging_)
+        document_->beginEditTransaction(QStringLiteral("Move breakpoints"));
     updateActiveLabel();
     return dragging_;
 }
@@ -372,6 +376,8 @@ bool BreakpointGraphModel::beginPartialDrag(int partial,
                                   toggleFromModifiers(mods));
     activePoint_ = {};
     dragging_ = document_->selectedPartials().contains(partial);
+    if (dragging_)
+        document_->beginEditTransaction(QStringLiteral("Move breakpoints"));
     updateActiveLabel();
     return dragging_;
 }
@@ -497,6 +503,8 @@ void BreakpointGraphModel::endDrag()
     if (!dragging_)
         return;
     dragging_ = false;
+    if (document_)
+        document_->endEditTransaction();
     recalculateRanges();
     emit graphChanged();
 }

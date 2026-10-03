@@ -96,6 +96,26 @@ ApplicationWindow {
     }
 
     Action {
+        id: undoAction
+        text: hydraDocument.canUndo && hydraDocument.undoText.length > 0
+              ? qsTr("Undo %1").arg(hydraDocument.undoText)
+              : qsTr("Undo")
+        shortcut: StandardKey.Undo
+        enabled: hydraDocument.canUndo
+        onTriggered: hydraDocument.undo()
+    }
+
+    Action {
+        id: redoAction
+        text: hydraDocument.canRedo && hydraDocument.redoText.length > 0
+              ? qsTr("Redo %1").arg(hydraDocument.redoText)
+              : qsTr("Redo")
+        shortcut: StandardKey.Redo
+        enabled: hydraDocument.canRedo
+        onTriggered: hydraDocument.redo()
+    }
+
+    Action {
         id: normalizeAmplitudesAction
         text: qsTr("Normalize Amplitudes")
         enabled: hydraDocument.loaded && window.editorMode === 0
@@ -152,6 +172,9 @@ ApplicationWindow {
 
         Menu {
             title: qsTr("Edit")
+            MenuItem { action: undoAction }
+            MenuItem { action: redoAction }
+            MenuSeparator { }
             MenuItem { action: normalizeAmplitudesAction }
             MenuSeparator { }
             MenuItem {

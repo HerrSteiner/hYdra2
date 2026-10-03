@@ -15,7 +15,9 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include "HetFile.hpp"
+#include "HydraDocument.hpp"
 
+#include <QtCore/QFile>
 #include <QtCore/QTemporaryDir>
 #include <QtTest/QTest>
 
@@ -29,6 +31,7 @@ private slots:
     void parsesCurrentText();
     void roundTripsLegacyLittleEndian();
     void preservesMutedSourceUntilSerialization();
+    void undoRedoDocumentEdit();
 };
 
 void HetFileTest::parsesCurrentText()
@@ -83,5 +86,56 @@ void HetFileTest::preservesMutedSourceUntilSerialization()
     QCOMPARE(data.partials.first().amplitude.first().value, 2000);
 }
 
-QTEST_MAIN(HetFileTest)
+
+void HetFileTest::undoRedoDocumentEdit()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString path = dir.filePath(QStringLiteral("undo-test.het"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(
+        "HETRO 1\n"
+        "-1,0,1000,500,2000,1000,1000,32767\n"
+        "-2,0,440,500,442,1000,439,32767\n\n");
+    file.close();
+
+    HydraDocument document;
+    QVERIFY(document.openUrl(QUrl::fromLocalFile(path)));
+    QVERIFY(!document.dirty());
+    QVERIFY(!document.canUndo());
+
+    const auto& amplitude = document.track(0, TrackKind::Amplitude);
+    QVERIFY(amplitude.size() >= 2);
+    const PointRef ref{0, TrackKind::Amplitude, amplitude.at(1).id};
+    document.selectPoint(ref);
+
+    const int originalTime = document.point(ref)->timeMs;
+    const int originalValue = document.point(ref)->value;
+
+    document.beginEditTransaction(QStringLiteral("Move breakpoints"));
+    document.moveSelected(75, 250, TrackKind::Amplitude, true);
+    document.moveSelected(25, 250, TrackKind::Amplitude, true);
+    document.endEditTransaction();
+
+    QVERIFY(document.canUndo());
+    QCOMPARE(document.undoText(), QStringLiteral("Move breakpoints"));
+    QVERIFY(document.dirty());
+    QCOMPARE(document.point(ref)->timeMs, originalTime + 100);
+    QCOMPARE(document.point(ref)->value, originalValue + 500);
+
+    document.undo();
+    QVERIFY(!document.dirty());
+    QVERIFY(document.canRedo());
+    QCOMPARE(document.point(ref)->timeMs, originalTime);
+    QCOMPARE(document.point(ref)->value, originalValue);
+
+    document.redo();
+    QVERIFY(document.dirty());
+    QCOMPARE(document.point(ref)->timeMs, originalTime + 100);
+    QCOMPARE(document.point(ref)->value, originalValue + 500);
+}
+
+QTEST_GUILESS_MAIN(HetFileTest)
 #include "tst_hetfile.moc"

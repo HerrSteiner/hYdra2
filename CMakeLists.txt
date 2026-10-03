@@ -12,7 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(HYDRA2_MIN_QT_VERSION 6.10)
 
-find_package(Qt6 ${HYDRA2_MIN_QT_VERSION} REQUIRED COMPONENTS Core Qml Quick QuickControls2 Graphs)
+find_package(Qt6 ${HYDRA2_MIN_QT_VERSION} REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Graphs)
 qt_standard_project_setup(REQUIRES ${HYDRA2_MIN_QT_VERSION})
 
 add_library(hydra2_core STATIC
@@ -24,7 +24,7 @@ add_library(hydra2_core STATIC
 )
 
 target_include_directories(hydra2_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(hydra2_core PUBLIC Qt6::Core)
+target_link_libraries(hydra2_core PUBLIC Qt6::Core Qt6::Gui)
 
 qt_add_executable(hydra2
     MACOSX_BUNDLE

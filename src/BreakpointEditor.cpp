@@ -653,6 +653,9 @@ void BreakpointEditor::mousePressEvent(QMouseEvent* event)
         }
     }
 
+    if (draggingPoints_)
+        document_->beginEditTransaction(QStringLiteral("Move breakpoints"));
+
     update();
     updateOverlay();
     event->accept();
@@ -689,6 +692,9 @@ void BreakpointEditor::mouseMoveEvent(QMouseEvent* event)
 
 void BreakpointEditor::mouseReleaseEvent(QMouseEvent* event)
 {
+    if (draggingPoints_ && document_)
+        document_->endEditTransaction();
+
     if (selectingRect_ && document_) {
         const bool additive = event->modifiers().testFlag(Qt::ShiftModifier)
                            || event->modifiers().testFlag(Qt::ControlModifier)
@@ -702,6 +708,18 @@ void BreakpointEditor::mouseReleaseEvent(QMouseEvent* event)
     update();
     updateOverlay();
     event->accept();
+}
+
+void BreakpointEditor::mouseUngrabEvent()
+{
+    if (draggingPoints_ && document_)
+        document_->endEditTransaction();
+
+    draggingPoints_ = false;
+    selectingRect_ = false;
+    panning_ = false;
+    update();
+    updateOverlay();
 }
 
 void BreakpointEditor::wheelEvent(QWheelEvent* event)

@@ -19,6 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <QDir>
 #include <QtCore/QFileInfo>
+#include <QtGui/QUndoCommand>
 
 #include <algorithm>
 #include <cmath>
@@ -36,9 +37,79 @@ bool containsRef(const QVector<PointRef>& refs, const PointRef& ref)
 
 } // namespace
 
+class HydraDocument::EditCommand final : public QUndoCommand
+{
+public:
+    EditCommand(HydraDocument* document,
+                QString text,
+                const EditState& before,
+                const EditState& after,
+                const QVector<int>& touchedPartials,
+                bool rawChanged)
+        : document_(document)
+        , rawChanged_(rawChanged)
+    {
+        setText(std::move(text));
+
+        partialIndices_.reserve(touchedPartials.size());
+        beforePartials_.reserve(touchedPartials.size());
+        afterPartials_.reserve(touchedPartials.size());
+
+        for (int partial : touchedPartials) {
+            if (partial < 0
+                || partial >= before.partials.size()
+                || partial >= after.partials.size()) {
+                continue;
+            }
+
+            partialIndices_.push_back(partial);
+            beforePartials_.push_back(before.partials.at(partial));
+            afterPartials_.push_back(after.partials.at(partial));
+        }
+    }
+
+    void undo() override
+    {
+        if (document_)
+            document_->applyPartialState(partialIndices_, beforePartials_, rawChanged_);
+    }
+
+    void redo() override
+    {
+        // QUndoStack::push() calls redo() immediately. The live edit has
+        // already produced the "after" state, so avoid repainting it twice.
+        if (firstRedo_) {
+            firstRedo_ = false;
+            return;
+        }
+
+        if (document_)
+            document_->applyPartialState(partialIndices_, afterPartials_, rawChanged_);
+    }
+
+private:
+    HydraDocument* document_ = nullptr;
+    QVector<int> partialIndices_;
+    QVector<Partial> beforePartials_;
+    QVector<Partial> afterPartials_;
+    bool rawChanged_ = false;
+    bool firstRedo_ = true;
+};
+
 HydraDocument::HydraDocument(QObject* parent)
     : QObject(parent)
 {
+    // Snapshot commands are deliberately bounded because large analyses can
+    // contain many thousands of breakpoint values.
+    undoStack_.setUndoLimit(100);
+
+    const auto notifyUndoState = [this] { emit undoStateChanged(); };
+    connect(&undoStack_, &QUndoStack::canUndoChanged, this, notifyUndoState);
+    connect(&undoStack_, &QUndoStack::canRedoChanged, this, notifyUndoState);
+    connect(&undoStack_, &QUndoStack::undoTextChanged, this, notifyUndoState);
+    connect(&undoStack_, &QUndoStack::redoTextChanged, this, notifyUndoState);
+    connect(&undoStack_, &QUndoStack::cleanChanged, this,
+            [this] { emit dirtyChanged(); });
 }
 
 QString HydraDocument::fileName() const
@@ -175,7 +246,9 @@ bool HydraDocument::openUrl(const QUrl& url)
     path_ = path;
     selectedPartials_.clear();
     selectedPoints_.clear();
-    setDirty(false);
+    resetEditTransaction();
+    undoStack_.clear();
+    undoStack_.setClean();
     setError({});
     emit fileChanged();
     emit documentReset();
@@ -238,7 +311,7 @@ bool HydraDocument::saveToPath(const QString& path, HetFormat format)
     path_ = path;
     data_.format = format;
     data_.binaryHasHeader = withHeader;
-    setDirty(false);
+    undoStack_.setClean();
     setError({});
     emit fileChanged();
     return true;
@@ -257,6 +330,10 @@ HetFormat HydraDocument::formatForPath(const QString& path) const
 
 void HydraDocument::normalizeAmplitudes()
 {
+    const bool ownTransaction = editTransactionDepth_ == 0;
+    if (ownTransaction)
+        beginEditTransaction(QStringLiteral("Normalize amplitudes"));
+
     int peak = 0;
 
     // Normalize the raw amplitude breakpoints only. Mixer gains stay
@@ -266,8 +343,11 @@ void HydraDocument::normalizeAmplitudes()
             peak = std::max(peak, point.value);
     }
 
-    if (peak <= 0 || peak == 32767)
+    if (peak <= 0 || peak == 32767) {
+        if (ownTransaction)
+            endEditTransaction();
         return;
+    }
 
     const double scale = 32767.0 / static_cast<double>(peak);
     bool changed = false;
@@ -299,18 +379,24 @@ void HydraDocument::normalizeAmplitudes()
         }
     }
 
-    if (!changed)
+    if (!changed) {
+        if (ownTransaction)
+            endEditTransaction();
         return;
-
-    setDirty(true);
-    emit dataChanged();
+    }
 
     QVector<int> changedPartials;
     changedPartials.reserve(data_.partials.size());
     for (int partial = 0; partial < data_.partials.size(); ++partial)
         changedPartials.push_back(partial);
+
+    markEditChanged(changedPartials, true);
+    emit dataChanged();
     emit rawPartialsChanged(changedPartials);
     emit partialsChanged(changedPartials);
+
+    if (ownTransaction)
+        endEditTransaction();
 }
 
 void HydraDocument::setPartialGain(int partial, double gain)
@@ -322,15 +408,27 @@ void HydraDocument::setPartialGain(int partial, double gain)
     if (qFuzzyCompare(data_.partials.at(partial).gain + 1.0, gain + 1.0))
         return;
 
+    const bool ownTransaction = editTransactionDepth_ == 0;
+    if (ownTransaction)
+        beginEditTransaction(QStringLiteral("Adjust partial level"));
+
     data_.partials[partial].gain = gain;
-    setDirty(true);
+    const QVector<int> changedPartials{partial};
+    markEditChanged(changedPartials, false);
     emit dataChanged();
-    emit partialsChanged(QVector<int>{partial});
+    emit partialsChanged(changedPartials);
+
+    if (ownTransaction)
+        endEditTransaction();
 }
 
 void HydraDocument::setPartialGains(const QVector<int>& partials,
                                     const QVector<double>& gains)
 {
+    const bool ownTransaction = editTransactionDepth_ == 0;
+    if (ownTransaction)
+        beginEditTransaction(QStringLiteral("Adjust partial levels"));
+
     const qsizetype count = std::min(partials.size(), gains.size());
     bool changed = false;
     QVector<int> changedPartials;
@@ -356,12 +454,18 @@ void HydraDocument::setPartialGains(const QVector<int>& partials,
             changedPartials.push_back(partial);
     }
 
-    if (!changed)
+    if (!changed) {
+        if (ownTransaction)
+            endEditTransaction();
         return;
+    }
 
-    setDirty(true);
+    markEditChanged(changedPartials, false);
     emit dataChanged();
     emit partialsChanged(changedPartials);
+
+    if (ownTransaction)
+        endEditTransaction();
 }
 
 void HydraDocument::setPartialSelection(int partial, bool additive, bool toggle)
@@ -672,6 +776,10 @@ void HydraDocument::moveSelected(int deltaTimeMs,
     if (deltaTimeMs == 0 && deltaDisplayValue == 0)
         return;
 
+    const bool ownTransaction = editTransactionDepth_ == 0;
+    if (ownTransaction)
+        beginEditTransaction(QStringLiteral("Move breakpoints"));
+
     // A stroke click selects both tracks of a partial. Treat horizontal
     // movement of such a selection as a true whole-partial translation:
     // amplitude and frequency move together while their t=0 anchors stay put.
@@ -731,8 +839,11 @@ void HydraDocument::moveSelected(int deltaTimeMs,
         touchedPartials.insert(ref.partial);
     }
 
-    if (!changed)
+    if (!changed) {
+        if (ownTransaction)
+            endEditTransaction();
         return;
+    }
 
     // Logic Snap preserves point topology. When it is disabled, keep the file
     // valid by sorting crossed points into chronological order.
@@ -748,21 +859,146 @@ void HydraDocument::moveSelected(int deltaTimeMs,
         }
     }
 
-    setDirty(true);
-    emit dataChanged();
-
     QVector<int> changedPartials = touchedPartials.values();
     std::sort(changedPartials.begin(), changedPartials.end());
+
+    markEditChanged(changedPartials, true);
+    emit dataChanged();
     emit rawPartialsChanged(changedPartials);
     emit partialsChanged(changedPartials);
+
+    if (ownTransaction)
+        endEditTransaction();
 }
 
-void HydraDocument::setDirty(bool value)
+HydraDocument::EditState HydraDocument::captureEditState() const
 {
-    if (dirty_ == value)
+    return {data_.partials};
+}
+
+void HydraDocument::applyPartialState(const QVector<int>& partialIndices,
+                                      const QVector<Partial>& partials,
+                                      bool rawChanged)
+{
+    // Selection itself is not undoable. Preserve whatever the user currently
+    // has selected, while keeping whole-partial selections complete when an
+    // undo/redo adds or removes generated hold points.
+    QSet<int> wholeSelectedPartials;
+    for (int partial : std::as_const(selectedPartials_)) {
+        if (isWholePartialSelected(partial))
+            wholeSelectedPartials.insert(partial);
+    }
+
+    const qsizetype count = std::min(partialIndices.size(), partials.size());
+    QVector<int> changedPartials;
+    changedPartials.reserve(count);
+
+    for (qsizetype i = 0; i < count; ++i) {
+        const int partial = partialIndices.at(i);
+        if (partial < 0 || partial >= data_.partials.size())
+            continue;
+        data_.partials[partial] = partials.at(i);
+        changedPartials.push_back(partial);
+    }
+
+    selectedPoints_.erase(
+        std::remove_if(selectedPoints_.begin(), selectedPoints_.end(),
+                       [this](const PointRef& ref) { return point(ref) == nullptr; }),
+        selectedPoints_.end());
+
+    for (int partial : std::as_const(wholeSelectedPartials)) {
+        if (partial >= 0 && partial < data_.partials.size()
+            && selectedPartials_.contains(partial)) {
+            rebuildWholePartialSelection(partial);
+        }
+    }
+
+    emit dataChanged();
+    if (rawChanged)
+        emit rawPartialsChanged(changedPartials);
+    emit partialsChanged(changedPartials);
+    emit selectionChanged();
+}
+
+void HydraDocument::beginEditTransaction(const QString& text)
+{
+    if (editTransactionDepth_ == 0) {
+        editTransactionBefore_ = captureEditState();
+        editTransactionText_ = text;
+        editTransactionModified_ = false;
+        editTransactionRawChanged_ = false;
+        editTransactionTouchedPartials_.clear();
+    }
+    ++editTransactionDepth_;
+}
+
+void HydraDocument::endEditTransaction()
+{
+    if (editTransactionDepth_ <= 0)
         return;
-    dirty_ = value;
-    emit dirtyChanged();
+
+    --editTransactionDepth_;
+    if (editTransactionDepth_ > 0)
+        return;
+
+    if (!editTransactionModified_) {
+        resetEditTransaction();
+        return;
+    }
+
+    QVector<int> touchedPartials = editTransactionTouchedPartials_.values();
+    std::sort(touchedPartials.begin(), touchedPartials.end());
+
+    const EditState after = captureEditState();
+    auto* command = new EditCommand(this,
+                                    editTransactionText_.isEmpty()
+                                        ? QStringLiteral("Edit")
+                                        : editTransactionText_,
+                                    editTransactionBefore_,
+                                    after,
+                                    touchedPartials,
+                                    editTransactionRawChanged_);
+
+    // Keep editTransactionModified_ true while push() changes the stack's
+    // clean state, so dirty() remains continuously true during the handoff.
+    undoStack_.push(command);
+    resetEditTransaction();
+}
+
+void HydraDocument::markEditChanged(const QVector<int>& touchedPartials,
+                                    bool rawChanged)
+{
+    const bool wasDirty = dirty();
+
+    editTransactionModified_ = true;
+    editTransactionRawChanged_ |= rawChanged;
+    for (int partial : touchedPartials)
+        editTransactionTouchedPartials_.insert(partial);
+
+    if (dirty() != wasDirty)
+        emit dirtyChanged();
+}
+
+void HydraDocument::resetEditTransaction()
+{
+    editTransactionDepth_ = 0;
+    editTransactionModified_ = false;
+    editTransactionRawChanged_ = false;
+    editTransactionText_.clear();
+    editTransactionBefore_ = {};
+    editTransactionTouchedPartials_.clear();
+}
+
+void HydraDocument::undo()
+{
+    if (editTransactionDepth_ == 0)
+        undoStack_.undo();
+}
+
+void HydraDocument::redo()
+{
+    if (editTransactionDepth_ == 0)
+        undoStack_.redo();
 }
 
 void HydraDocument::setError(const QString& error)

@@ -22,6 +22,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QtCore/QObject>
 #include <QtCore/QSet>
 #include <QtCore/QUrl>
+#include <QtGui/QUndoStack>
 
 namespace hydra2 {
 
@@ -32,6 +33,10 @@ class HydraDocument final : public QObject
     Q_PROPERTY(QUrl fileUrl READ fileUrl NOTIFY fileChanged)
     Q_PROPERTY(bool loaded READ loaded NOTIFY documentReset)
     Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
+    Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStateChanged)
+    Q_PROPERTY(bool canRedo READ canRedo NOTIFY undoStateChanged)
+    Q_PROPERTY(QString undoText READ undoText NOTIFY undoStateChanged)
+    Q_PROPERTY(QString redoText READ redoText NOTIFY undoStateChanged)
     Q_PROPERTY(int partialCount READ partialCount NOTIFY documentReset)
     Q_PROPERTY(int durationMs READ durationMs NOTIFY dataChanged)
     Q_PROPERTY(QString errorString READ errorString NOTIFY errorStringChanged)
@@ -42,7 +47,11 @@ public:
     QString fileName() const;
     QUrl fileUrl() const;
     bool loaded() const { return !data_.partials.isEmpty(); }
-    bool dirty() const { return dirty_; }
+    bool dirty() const { return !undoStack_.isClean() || editTransactionModified_; }
+    bool canUndo() const { return undoStack_.canUndo(); }
+    bool canRedo() const { return undoStack_.canRedo(); }
+    QString undoText() const { return undoStack_.undoText(); }
+    QString redoText() const { return undoStack_.redoText(); }
     int partialCount() const { return data_.partials.size(); }
     int durationMs() const;
     QString errorString() const { return errorString_; }
@@ -63,6 +72,13 @@ public:
     Q_INVOKABLE bool save();
     Q_INVOKABLE bool saveAs(const QUrl& url, int formatIndex);
     Q_INVOKABLE void normalizeAmplitudes();
+    Q_INVOKABLE void undo();
+    Q_INVOKABLE void redo();
+
+    // Interactive edits use a transaction so a complete mouse drag becomes
+    // one undo command instead of one command for every mouse-move event.
+    void beginEditTransaction(const QString& text);
+    void endEditTransaction();
 
     void setPartialGain(int partial, double gain);
     void setPartialGains(const QVector<int>& partials, const QVector<double>& gains);
@@ -86,12 +102,18 @@ signals:
     void selectionChanged();
     void fileChanged();
     void dirtyChanged();
+    void undoStateChanged();
     void errorStringChanged();
 
 private:
+    struct EditState {
+        QVector<Partial> partials;
+    };
+
+    class EditCommand;
+
     Breakpoint* mutablePoint(const PointRef& ref);
     QVector<Breakpoint>& mutableTrack(int partial, TrackKind kind);
-    void setDirty(bool value);
     void setError(const QString& error);
     bool saveToPath(const QString& path, HetFormat format);
     HetFormat formatForPath(const QString& path) const;
@@ -102,12 +124,26 @@ private:
     quint64 nextBreakpointId() const;
     void rebuildWholePartialSelection(int partial);
 
+    EditState captureEditState() const;
+    void applyPartialState(const QVector<int>& partialIndices,
+                           const QVector<Partial>& partials,
+                           bool rawChanged);
+    void markEditChanged(const QVector<int>& touchedPartials, bool rawChanged);
+    void resetEditTransaction();
+
     HetData data_;
     QString path_;
     QString errorString_;
-    bool dirty_ = false;
     QSet<int> selectedPartials_;
     QVector<PointRef> selectedPoints_;
+
+    QUndoStack undoStack_;
+    int editTransactionDepth_ = 0;
+    bool editTransactionModified_ = false;
+    bool editTransactionRawChanged_ = false;
+    QString editTransactionText_;
+    EditState editTransactionBefore_;
+    QSet<int> editTransactionTouchedPartials_;
 };
 
 } // namespace hydra2

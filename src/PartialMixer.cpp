@@ -252,6 +252,10 @@ void PartialMixer::mouseMoveEvent(QMouseEvent* event)
     if (!levelDragStarted_ &&
         (event->position() - pressPos_).manhattanLength() >= 3.0) {
         levelDragStarted_ = true;
+        document_->beginEditTransaction(
+            dragPartials_.size() == 1
+                ? QStringLiteral("Adjust partial level")
+                : QStringLiteral("Adjust partial levels"));
     }
 
     if (levelDragStarted_)
@@ -263,6 +267,21 @@ void PartialMixer::mouseMoveEvent(QMouseEvent* event)
 void PartialMixer::mouseReleaseEvent(QMouseEvent* event)
 {
     Q_UNUSED(event);
+    if (levelDragStarted_ && document_)
+        document_->endEditTransaction();
+
+    draggingPartial_ = -1;
+    levelDragStarted_ = false;
+    dragPartials_.clear();
+    dragStartGains_.clear();
+    dragNaturalHeights_.clear();
+}
+
+void PartialMixer::mouseUngrabEvent()
+{
+    if (levelDragStarted_ && document_)
+        document_->endEditTransaction();
+
     draggingPartial_ = -1;
     levelDragStarted_ = false;
     dragPartials_.clear();
