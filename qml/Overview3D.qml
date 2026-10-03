@@ -120,7 +120,6 @@ Window {
         }
 
         Component.onCompleted: setDragButton(Qt.RightButton)
-        onSelectedSeriesChanged: overviewInput.finishPick()
     }
 
     Instantiator {
@@ -146,12 +145,6 @@ Window {
             splineLooping: false
             itemLabelVisible: false
 
-            onSelectedItemChanged: {
-                if (overviewInput.pendingPick
-                        && selectedItem !== invalidSelectionIndex)
-                    overviewInput.finishPick()
-            }
-
             dataProxy: ItemModelScatterDataProxy {
                 itemModel: pointModel
                 xPosRole: "xPos"
@@ -175,43 +168,27 @@ Window {
         acceptedButtons: Qt.LeftButton
         hoverEnabled: true
 
-        property bool pendingPick: false
-        property int pendingModifiers: Qt.NoModifier
-
-        function finishPick() {
-            if (!pendingPick)
-                return
-
-            const series = graph.selectedSeries
-            if (!series || series.partialIndex === undefined)
-                return
-
-            pendingPick = false
-            missTimer.stop()
-            graphModel.selectPartial(series.partialIndex, pendingModifiers)
-            graph.clearSelection()
-        }
-
-        Timer {
-            id: missTimer
-            interval: 250
-            repeat: false
-            onTriggered: {
-                if (!overviewInput.pendingPick)
-                    return
-                overviewInput.pendingPick = false
-                if (!(overviewInput.pendingModifiers
-                      & (Qt.ShiftModifier | Qt.ControlModifier | Qt.MetaModifier)))
-                    graphModel.clearSelection()
-            }
-        }
-
         onPressed: function(mouse) {
-            pendingModifiers = mouse.modifiers
-            pendingPick = true
+            const modifiers = mouse.modifiers
+            const additive = modifiers
+                    & (Qt.ShiftModifier | Qt.ControlModifier | Qt.MetaModifier)
+
+            // doPicking() performs the graph pick immediately. Clear any
+            // previous Qt Graphs selection first so selectedSeries reflects
+            // only this click.
             graph.clearSelection()
             graph.doPicking(Qt.point(mouse.x, mouse.y))
-            missTimer.restart()
+
+            const series = graph.selectedSeries
+            if (series && series.partialIndex !== undefined) {
+                graphModel.selectPartial(series.partialIndex, modifiers)
+            } else if (!additive) {
+                graphModel.clearSelection()
+            }
+
+            // Qt Graphs selection is used only as a picking mechanism.
+            // Persistent selection belongs to HydraDocument / graphModel.
+            graph.clearSelection()
         }
 
         onWheel: function(wheel) {

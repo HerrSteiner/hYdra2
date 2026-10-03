@@ -338,7 +338,7 @@ ApplicationWindow {
             Label {
                 anchors.centerIn: parent
                 visible: !hydraDocument.loaded
-                text: qsTr("Open a Csound HETRO / adsyn analysis file")
+                text: qsTr("Open a Csound hetrodyne / adsyn analysis file")
                 color: "#aaafb8"
             }
 
