@@ -46,12 +46,25 @@ jobs:
           extra: ${{ runner.os == 'Windows' && '--external 7z' || '' }}
 
       - name: Configure
+        if: runner.os != 'macOS'
         run: >
           cmake
           -S .
           -B build
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/stage"
+          -DBUILD_TESTING=ON
+
+      - name: Configure macOS universal
+        if: runner.os == 'macOS'
+        run: >
+          cmake
+          -S .
+          -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/stage"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
+          '-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64'
           -DBUILD_TESTING=ON
 
       - name: Build
@@ -63,10 +76,49 @@ jobs:
       - name: Install and deploy
         run: cmake --install build --config Release
 
-      - name: Upload build artifact
+      - name: Package macOS artifact
+        if: runner.os == 'macOS'
+        run: >
+          ditto
+          -c
+          -k
+          --sequesterRsrc
+          --keepParent
+          stage/hYdra2.app
+          hYdra2-macOS.zip
+
+      - name: Package Linux artifact
+        if: runner.os == 'Linux'
+        run: tar -C stage -czf hYdra2-Linux-x64.tar.gz .
+
+      - name: Package Windows artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path stage\* -DestinationPath hYdra2-Windows-x64.zip
+
+      - name: Upload macOS artifact
+        if: runner.os == 'macOS'
         uses: actions/upload-artifact@v7
         with:
-          name: hYdra2-${{ matrix.name }}
-          path: stage/
+          name: hYdra2-macOS
+          path: hYdra2-macOS.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Linux artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: hYdra2-Linux-x64
+          path: hYdra2-Linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Windows artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: hYdra2-Windows-x64
+          path: hYdra2-Windows-x64.zip
           if-no-files-found: error
           retention-days: 7
