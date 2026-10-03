@@ -37,9 +37,11 @@ jobs:
         with:
           version: '6.11.2'
           target: desktop
-          modules: 'qtgraphs'
+          modules: 'qttasktree qtshadertools qtquicktimeline qtquick3d qtgraphs'
           cache: true
+          cache-key-prefix: 'hydra2-qt-6.11.2-v2'
           setup-python: false
+          aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@9e49c82edc6d946db376dec907cca5b4b486eec5'
           py7zrversion: '==1.1.0'
           extra: ${{ runner.os == 'Windows' && '--external 7z' || '' }}
 
