@@ -22,8 +22,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QtCore/QPointer>
 #include <QtCore/QVariantList>
 #include <QtGui/QVector3D>
+#include <QtGraphs/QValue3DAxisFormatter>
 
 namespace hydra2 {
+
+class PartialAxisFormatter : public QValue3DAxisFormatter
+{
+    Q_OBJECT
+
+public:
+    explicit PartialAxisFormatter(QObject* parent = nullptr);
+
+protected:
+    QValue3DAxisFormatter* createNewInstance() const override;
+    void populateCopy(QValue3DAxisFormatter& copy) override;
+    void recalculate() override;
+};
 
 class TrackPointModel final : public QAbstractListModel
 {

@@ -34,6 +34,7 @@ int main(int argc, char* argv[])
 
     qmlRegisterType<hydra2::BreakpointEditor>("Hydra2.Native", 1, 0, "BreakpointEditor");
     qmlRegisterType<hydra2::BreakpointGraphModel>("Hydra2.Native", 1, 0, "BreakpointGraphModel");
+    qmlRegisterType<hydra2::PartialAxisFormatter>("Hydra2.Native", 1, 0, "PartialAxisFormatter");
     qmlRegisterType<hydra2::PartialMixer>("Hydra2.Native", 1, 0, "PartialMixer");
 
     hydra2::HydraDocument document;

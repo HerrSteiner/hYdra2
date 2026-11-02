@@ -20,6 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QtCore/QPointF>
 #include <QtCore/QVariant>
 #include <QtGui/QVector3D>
+#include <QtGraphs/QValue3DAxis>
 
 #include <algorithm>
 #include <cmath>
@@ -28,7 +29,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 namespace hydra2 {
 namespace {
 
-constexpr double kDepthSpacing = 2.0;
+constexpr int kMaximumPartialAxisLabels = 9;
 
 Qt::KeyboardModifiers toModifiers(int value)
 {
@@ -36,6 +37,71 @@ Qt::KeyboardModifiers toModifiers(int value)
 }
 
 } // namespace
+
+PartialAxisFormatter::PartialAxisFormatter(QObject* parent)
+    : QValue3DAxisFormatter(parent)
+{
+}
+
+QValue3DAxisFormatter* PartialAxisFormatter::createNewInstance() const
+{
+    return new PartialAxisFormatter;
+}
+
+void PartialAxisFormatter::populateCopy(QValue3DAxisFormatter& copy)
+{
+    QValue3DAxisFormatter::populateCopy(copy);
+}
+
+void PartialAxisFormatter::recalculate()
+{
+    QValue3DAxis* valueAxis = axis();
+    if (!valueAxis)
+        return;
+
+    const float minimum = valueAxis->min();
+    const float maximum = valueAxis->max();
+    if (maximum <= minimum) {
+        setGridPoitions({0.0f});
+        setlabelPositions({0.0f});
+        setLabelStrings({QString::number(qRound(maximum))});
+        setSubGridPositions({});
+        return;
+    }
+
+    const int firstPartial = std::max(1, static_cast<int>(std::ceil(minimum)));
+    const int lastPartial = std::max(firstPartial, static_cast<int>(std::floor(maximum)));
+    const int partialCount = lastPartial - firstPartial + 1;
+    const int labelCount = std::min(kMaximumPartialAxisLabels, partialCount);
+
+    QList<float> positions;
+    QStringList labels;
+    positions.reserve(labelCount);
+    labels.reserve(labelCount);
+
+    int previousPartial = -1;
+    for (int i = 0; i < labelCount; ++i) {
+        const int partial = labelCount == 1
+            ? lastPartial
+            : qRound(firstPartial
+                     + (static_cast<double>(i) * (lastPartial - firstPartial))
+                         / (labelCount - 1));
+        if (partial == previousPartial)
+            continue;
+
+        const float position = (static_cast<float>(partial) - minimum)
+            / (maximum - minimum);
+        positions.push_back(position);
+        labels.push_back(QString::number(partial));
+        previousPartial = partial;
+    }
+
+    // Keep grid planes and labels on exactly the same partial lanes.
+    setGridPoitions(positions);
+    setlabelPositions(positions);
+    setLabelStrings(labels);
+    setSubGridPositions({});
+}
 
 TrackPointModel::TrackPointModel(HydraDocument* document,
                                  int partial,
@@ -72,7 +138,7 @@ QVariant TrackPointModel::data(const QModelIndex& index, int role) const
     case YPosRole:
         return document_->displayValue(partial_, kind_, point);
     case ZPosRole:
-        return (partial_ + 1) * kDepthSpacing;
+        return partial_ + 1;
     case PointIdRole:
         return QVariant::fromValue<qulonglong>(point.id);
     default:
@@ -176,7 +242,7 @@ void SelectedPointModel::rebuild(HydraDocument* document, TrackKind kind)
             points_.push_back(QVector3D(
                 static_cast<float>(point->timeMs),
                 static_cast<float>(document->displayValue(ref.partial, kind, *point)),
-                static_cast<float>((ref.partial + 1) * kDepthSpacing)));
+                static_cast<float>(ref.partial + 1)));
             refs_.push_back(ref);
         }
     }
@@ -278,8 +344,8 @@ void BreakpointGraphModel::recalculateRanges()
 {
     durationMs_ = document_ ? std::max(1, document_->durationMs()) : 1.0;
     maximumZ_ = document_ && document_->partialCount() > 0
-        ? document_->partialCount() * kDepthSpacing
-        : kDepthSpacing;
+        ? document_->partialCount()
+        : 1.0;
 
     if (!document_ || mode_ == TrackKind::Amplitude) {
         maximumY_ = 32767.0;
