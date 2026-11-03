@@ -74,7 +74,7 @@ Window {
         axisZ: Value3DAxis {
             // Z is the actual 1-based partial number. The custom formatter
             // keeps every visible label exactly on a real partial lane.
-            min: root.document.partialCount > 1 ? 1 : 0
+            min: 0
             max: Math.max(1, graphModel.maximumZ)
             title: qsTr("Partial")
             titleVisible: true

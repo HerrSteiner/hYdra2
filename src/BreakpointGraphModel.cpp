@@ -329,7 +329,7 @@ void BreakpointGraphModel::setMode(int mode)
         return;
 
     mode_ = next;
-    for (TrackPointModel* model : pointModels_)
+    for (TrackPointModel* model : std::as_const(pointModels_))
         model->setKind(mode_);
     selectedPoints_.rebuild(document_.data(), mode_);
     activePoint_ = {};
