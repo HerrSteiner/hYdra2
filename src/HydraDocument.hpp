@@ -39,6 +39,8 @@ class HydraDocument final : public QObject
     Q_PROPERTY(QString redoText READ redoText NOTIFY undoStateChanged)
     Q_PROPERTY(int partialCount READ partialCount NOTIFY documentReset)
     Q_PROPERTY(int durationMs READ durationMs NOTIFY dataChanged)
+    Q_PROPERTY(bool hasSelectedAmplitudePoints READ hasSelectedAmplitudePoints NOTIFY selectionChanged)
+    Q_PROPERTY(bool hasSelectedFrequencyPoints READ hasSelectedFrequencyPoints NOTIFY selectionChanged)
     Q_PROPERTY(QString errorString READ errorString NOTIFY errorStringChanged)
 
 public:
@@ -65,6 +67,8 @@ public:
 
     const QSet<int>& selectedPartials() const { return selectedPartials_; }
     const QVector<PointRef>& selectedPoints() const { return selectedPoints_; }
+    bool hasSelectedAmplitudePoints() const;
+    bool hasSelectedFrequencyPoints() const;
     bool isPointSelected(const PointRef& ref) const;
     const Breakpoint* point(const PointRef& ref) const;
 
@@ -72,6 +76,8 @@ public:
     Q_INVOKABLE bool save();
     Q_INVOKABLE bool saveAs(const QUrl& url, int formatIndex);
     Q_INVOKABLE void normalizeAmplitudes();
+    Q_INVOKABLE void smoothSelected(int mode);
+    Q_INVOKABLE void averageSelected(int mode);
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
 

@@ -186,6 +186,18 @@ double HydraDocument::partialGain(int partial) const
     return data_.partials.at(partial).gain;
 }
 
+bool HydraDocument::hasSelectedAmplitudePoints() const
+{
+    return std::any_of(selectedPoints_.cbegin(), selectedPoints_.cend(),
+                       [](const PointRef& ref) { return ref.kind == TrackKind::Amplitude; });
+}
+
+bool HydraDocument::hasSelectedFrequencyPoints() const
+{
+    return std::any_of(selectedPoints_.cbegin(), selectedPoints_.cend(),
+                       [](const PointRef& ref) { return ref.kind == TrackKind::Frequency; });
+}
+
 bool HydraDocument::isPointSelected(const PointRef& ref) const
 {
     return containsRef(selectedPoints_, ref);
@@ -338,7 +350,7 @@ void HydraDocument::normalizeAmplitudes()
 
     // Normalize the raw amplitude breakpoints only. Mixer gains stay
     // non-destructive, so a muted partial remains recoverable after Normalize.
-    for (const auto& partial : data_.partials) {
+    for (const auto& partial : std::as_const(data_.partials)) {
         for (const auto& point : partial.amplitude)
             peak = std::max(peak, point.value);
     }
@@ -394,6 +406,120 @@ void HydraDocument::normalizeAmplitudes()
     emit dataChanged();
     emit rawPartialsChanged(changedPartials);
     emit partialsChanged(changedPartials);
+
+    if (ownTransaction)
+        endEditTransaction();
+}
+
+void HydraDocument::smoothSelected(int mode)
+{
+    const TrackKind kind = mode == static_cast<int>(TrackKind::Frequency)
+        ? TrackKind::Frequency
+        : TrackKind::Amplitude;
+
+    const bool ownTransaction = editTransactionDepth_ == 0;
+    if (ownTransaction)
+        beginEditTransaction(QStringLiteral("Smooth selected"));
+
+    QVector<int> changedPartials;
+    const auto amountPartials = data_.partials.size();
+    for (int partialIndex = 0; partialIndex < amountPartials; ++partialIndex) {
+        auto& points = mutableTrack(partialIndex, kind);
+        if (points.size() < 3)
+            continue;
+
+        // Always calculate from the unmodified contour. Otherwise smoothing
+        // would become directional because an earlier result would influence
+        // the next point in the same pass.
+        const QVector<Breakpoint> original = points;
+        bool partialChanged = false;
+        const auto originalAmount = original.size();
+        for (qsizetype i = 1; i + 1 < originalAmount; ++i) {
+            const PointRef ref{partialIndex, kind, original.at(i).id};
+            if (!containsRef(selectedPoints_, ref))
+                continue;
+
+            const double smoothed =
+                (static_cast<double>(original.at(i - 1).value)
+                 + 2.0 * static_cast<double>(original.at(i).value)
+                 + static_cast<double>(original.at(i + 1).value)) / 4.0;
+
+            const int value = std::clamp(
+                static_cast<int>(std::lround(smoothed)), 0, 32767);
+            if (points[i].value != value) {
+                points[i].value = value;
+                partialChanged = true;
+            }
+        }
+
+        if (partialChanged)
+            changedPartials.push_back(partialIndex);
+    }
+
+    if (!changedPartials.isEmpty()) {
+        markEditChanged(changedPartials, true);
+        emit dataChanged();
+        emit rawPartialsChanged(changedPartials);
+        emit partialsChanged(changedPartials);
+    }
+
+    if (ownTransaction)
+        endEditTransaction();
+}
+
+void HydraDocument::averageSelected(int mode)
+{
+    const TrackKind kind = mode == static_cast<int>(TrackKind::Frequency)
+        ? TrackKind::Frequency
+        : TrackKind::Amplitude;
+
+    const bool ownTransaction = editTransactionDepth_ == 0;
+    if (ownTransaction)
+        beginEditTransaction(QStringLiteral("Average selected"));
+
+    QVector<int> changedPartials;
+
+    const auto amountPartials = data_.partials.size();
+    for (int partialIndex = 0; partialIndex < amountPartials; ++partialIndex) {
+        auto& points = mutableTrack(partialIndex, kind);
+
+        qint64 sum = 0;
+        int selectedCount = 0;
+        for (const auto& point : std::as_const(points)) {
+            if (containsRef(selectedPoints_, PointRef{partialIndex, kind, point.id})) {
+                sum += point.value;
+                ++selectedCount;
+            }
+        }
+
+        if (selectedCount == 0)
+            continue;
+
+        const int average = std::clamp(
+            static_cast<int>(std::lround(static_cast<double>(sum)
+                                         / static_cast<double>(selectedCount))),
+            0, 32767);
+
+        bool partialChanged = false;
+        for (auto& point : points) {
+            if (!containsRef(selectedPoints_, PointRef{partialIndex, kind, point.id}))
+                continue;
+            if (point.value != average) {
+                point.value = average;
+                partialChanged = true;
+            }
+        }
+
+        if (partialChanged)
+            changedPartials.push_back(partialIndex);
+    }
+
+    if (!changedPartials.isEmpty()) {
+        markEditChanged(changedPartials, true);
+        emit dataChanged();
+        emit rawPartialsChanged(changedPartials);
+        emit partialsChanged(changedPartials);
+    }
 
     if (ownTransaction)
         endEditTransaction();

@@ -116,6 +116,24 @@ ApplicationWindow {
     }
 
     Action {
+        id: smoothSelectedAction
+        text: qsTr("Smooth Selected")
+        enabled: hydraDocument.loaded && (window.editorMode === 0
+                 ? hydraDocument.hasSelectedAmplitudePoints
+                 : hydraDocument.hasSelectedFrequencyPoints)
+        onTriggered: hydraDocument.smoothSelected(window.editorMode)
+    }
+
+    Action {
+        id: averageSelectedAction
+        text: qsTr("Average Selected")
+        enabled: hydraDocument.loaded && (window.editorMode === 0
+                 ? hydraDocument.hasSelectedAmplitudePoints
+                 : hydraDocument.hasSelectedFrequencyPoints)
+        onTriggered: hydraDocument.averageSelected(window.editorMode)
+    }
+
+    Action {
         id: normalizeAmplitudesAction
         text: qsTr("Normalize Amplitudes")
         enabled: hydraDocument.loaded && window.editorMode === 0
@@ -174,6 +192,9 @@ ApplicationWindow {
             title: qsTr("Edit")
             MenuItem { action: undoAction }
             MenuItem { action: redoAction }
+            MenuSeparator { }
+            MenuItem { action: smoothSelectedAction }
+            MenuItem { action: averageSelectedAction }
             MenuSeparator { }
             MenuItem { action: normalizeAmplitudesAction }
             MenuSeparator { }

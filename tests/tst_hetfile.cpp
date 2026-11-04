@@ -32,6 +32,8 @@ private slots:
     void roundTripsLegacyLittleEndian();
     void preservesMutedSourceUntilSerialization();
     void undoRedoDocumentEdit();
+    void smoothsSelectedBreakpoints();
+    void averagesSelectedBreakpointsPerPartial();
 };
 
 void HetFileTest::parsesCurrentText()
@@ -135,6 +137,103 @@ void HetFileTest::undoRedoDocumentEdit()
     QVERIFY(document.dirty());
     QCOMPARE(document.point(ref)->timeMs, originalTime + 100);
     QCOMPARE(document.point(ref)->value, originalValue + 500);
+}
+
+
+void HetFileTest::smoothsSelectedBreakpoints()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString path = dir.filePath(QStringLiteral("smooth-test.het"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(
+        "HETRO 1\n"
+        "-1,0,100,250,300,500,100,750,500,1000,100,32767\n"
+        "-2,0,440,250,441,500,442,750,443,1000,444,32767\n\n");
+    file.close();
+
+    HydraDocument document;
+    QVERIFY(document.openUrl(QUrl::fromLocalFile(path)));
+
+    const auto& amplitude = document.track(0, TrackKind::Amplitude);
+    QCOMPARE(amplitude.size(), qsizetype(5));
+
+    QVector<PointRef> selection;
+    for (int i = 1; i <= 3; ++i)
+        selection.push_back({0, TrackKind::Amplitude, amplitude.at(i).id});
+    document.setPointSelection(selection);
+
+    document.smoothSelected(static_cast<int>(TrackKind::Amplitude));
+
+    const auto& smoothed = document.track(0, TrackKind::Amplitude);
+    QCOMPARE(smoothed.at(0).value, 100);
+    QCOMPARE(smoothed.at(1).value, 200);
+    QCOMPARE(smoothed.at(2).value, 250);
+    QCOMPARE(smoothed.at(3).value, 300);
+    QCOMPARE(smoothed.at(4).value, 100);
+
+    // Frequency data must not be touched while the amplitude editor is active.
+    QCOMPARE(document.track(0, TrackKind::Frequency).at(2).value, 442);
+    QCOMPARE(document.undoText(), QStringLiteral("Smooth selected"));
+
+    document.undo();
+    QCOMPARE(document.track(0, TrackKind::Amplitude).at(1).value, 300);
+    QCOMPARE(document.track(0, TrackKind::Amplitude).at(2).value, 100);
+    QCOMPARE(document.track(0, TrackKind::Amplitude).at(3).value, 500);
+}
+
+void HetFileTest::averagesSelectedBreakpointsPerPartial()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString path = dir.filePath(QStringLiteral("average-test.het"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(
+        "HETRO 2\n"
+        "-1,0,1000,500,2000,1000,1000,32767\n"
+        "-2,0,400,500,500,1000,600,32767\n"
+        "-1,0,3000,500,4000,1000,5000,32767\n"
+        "-2,0,1000,500,1200,1000,1600,32767\n\n");
+    file.close();
+
+    HydraDocument document;
+    QVERIFY(document.openUrl(QUrl::fromLocalFile(path)));
+    QCOMPARE(document.partialCount(), 2);
+
+    const auto& freq0 = document.track(0, TrackKind::Frequency);
+    const auto& freq1 = document.track(1, TrackKind::Frequency);
+
+    QVector<PointRef> selection {
+        {0, TrackKind::Frequency, freq0.at(0).id},
+        {0, TrackKind::Frequency, freq0.at(1).id},
+        {0, TrackKind::Frequency, freq0.at(2).id},
+        {1, TrackKind::Frequency, freq1.at(0).id},
+        {1, TrackKind::Frequency, freq1.at(2).id},
+        // An amplitude point is deliberately selected as well; frequency mode
+        // must ignore it.
+        {1, TrackKind::Amplitude,
+         document.track(1, TrackKind::Amplitude).at(1).id}
+    };
+    document.setPointSelection(selection);
+
+    document.averageSelected(static_cast<int>(TrackKind::Frequency));
+
+    const auto& averaged0 = document.track(0, TrackKind::Frequency);
+    QCOMPARE(averaged0.at(0).value, 500);
+    QCOMPARE(averaged0.at(1).value, 500);
+    QCOMPARE(averaged0.at(2).value, 500);
+
+    const auto& averaged1 = document.track(1, TrackKind::Frequency);
+    QCOMPARE(averaged1.at(0).value, 1300);
+    QCOMPARE(averaged1.at(1).value, 1200);
+    QCOMPARE(averaged1.at(2).value, 1300);
+
+    QCOMPARE(document.track(1, TrackKind::Amplitude).at(1).value, 4000);
+    QCOMPARE(document.undoText(), QStringLiteral("Average selected"));
 }
 
 QTEST_GUILESS_MAIN(HetFileTest)
