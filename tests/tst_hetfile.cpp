@@ -34,6 +34,9 @@ private slots:
     void undoRedoDocumentEdit();
     void smoothsSelectedBreakpoints();
     void averagesSelectedBreakpointsPerPartial();
+    void createsHarmonicOctaveAndVocoderPresets();
+    void validatesNewDocumentAndPreservesExistingOnError();
+    void savesGeneratedDocumentToBothFormats();
 };
 
 void HetFileTest::parsesCurrentText()
@@ -234,6 +237,106 @@ void HetFileTest::averagesSelectedBreakpointsPerPartial()
 
     QCOMPARE(document.track(1, TrackKind::Amplitude).at(1).value, 4000);
     QCOMPARE(document.undoText(), QStringLiteral("Average selected"));
+}
+
+void HetFileTest::createsHarmonicOctaveAndVocoderPresets()
+{
+    HydraDocument document;
+    QVERIFY(document.newDocument(HydraDocument::Preset::Harmonics, 4000, 5, 100));
+    QCOMPARE(document.fileName(), QStringLiteral("Untitled"));
+    QVERIFY(document.untitled());
+    QVERIFY(document.loaded());
+    QVERIFY(document.dirty());
+    QVERIFY(!document.canUndo());
+    QCOMPARE(document.durationMs(), 4000);
+    QCOMPARE(document.partialCount(), 10);
+    for (int i = 0; i < 10; ++i) {
+        const auto& amplitude = document.track(i, TrackKind::Amplitude);
+        const auto& frequency = document.track(i, TrackKind::Frequency);
+        QCOMPARE(amplitude.size(), qsizetype(5));
+        QCOMPARE(frequency.size(), qsizetype(5));
+        for (int j = 0; j < 5; ++j) {
+            QCOMPARE(amplitude.at(j).timeMs, j * 1000);
+            QCOMPARE(frequency.at(j).timeMs, j * 1000);
+            QCOMPARE(amplitude.at(j).value, 3500);
+            QCOMPARE(frequency.at(j).value, 100 * (i + 1));
+            QVERIFY(amplitude.at(j).id != frequency.at(j).id);
+        }
+    }
+
+    QVERIFY(document.newDocument(HydraDocument::Preset::Octaves, 1001, 4, 20));
+    QCOMPARE(document.partialCount(), 10);
+    const int octaveFrequencies[] = {20, 40, 80, 160, 320, 640, 1280, 2560, 5120, 10240};
+    for (int i = 0; i < 10; ++i) {
+        QCOMPARE(document.track(i, TrackKind::Frequency).at(0).value, octaveFrequencies[i]);
+    }
+    const auto& times = document.track(0, TrackKind::Amplitude);
+    QCOMPARE(times.at(0).timeMs, 0);
+    QCOMPARE(times.at(1).timeMs, 334);
+    QCOMPARE(times.at(2).timeMs, 667);
+    QCOMPARE(times.at(3).timeMs, 1001);
+
+    QVERIFY(document.newDocument(HydraDocument::Preset::Vocoder, 2000, 3, 0)); // Fundamental is not used for vocoder.
+    QCOMPARE(document.partialCount(), 15);
+    const int vocoderFrequencies[] = {
+        100, 120, 160, 230, 330, 500, 750, 1100, 1300, 1600,
+        2300, 3300, 5000, 7500, 10000
+    };
+    for (int i = 0; i < 15; ++i) {
+        const auto& frequency = document.track(i, TrackKind::Frequency);
+        QCOMPARE(frequency.at(0).value, vocoderFrequencies[i]);
+        QCOMPARE(frequency.at(2).timeMs, 2000);
+    }
+}
+
+void HetFileTest::validatesNewDocumentAndPreservesExistingOnError()
+{
+    HydraDocument document;
+    QVERIFY(document.newDocument(HydraDocument::Preset::Harmonics, 1000, 3, 440));
+    const auto before = document.track(0, TrackKind::Frequency).at(0);
+
+    QVERIFY(!document.newDocument(HydraDocument::Preset::Octaves, 1000, 3, 100));  // 100 * 512 > 32767.
+    QVERIFY(!document.errorString().isEmpty());
+    QCOMPARE(document.track(0, TrackKind::Frequency).at(0).id, before.id);
+    QCOMPARE(document.track(0, TrackKind::Frequency).at(0).value, before.value);
+    QVERIFY(!document.newDocument(HydraDocument::Preset::Harmonics, 32767, 3, 100)); // Terminator timestamp.
+    QVERIFY(!document.newDocument(HydraDocument::Preset::Harmonics, 1000, 1002, 100)); // Duplicate timestamps.
+    QVERIFY(document.dirty());
+    QCOMPARE(document.partialCount(), 10);
+
+    QVERIFY(!document.newDocument(HydraDocument::Preset::Octaves, 32766, 3, 64)); // Just over 16-bit frequency.
+    QVERIFY(document.newDocument(HydraDocument::Preset::Octaves, 32766, 3, 63));
+    QCOMPARE(document.track(9, TrackKind::Frequency).first().value, 32256);
+}
+
+void HetFileTest::savesGeneratedDocumentToBothFormats()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    HydraDocument document;
+    QVERIFY(document.newDocument(HydraDocument::Preset::Vocoder, 12345, 7, 0));
+    const QString hetPath = dir.filePath(QStringLiteral("generated.het"));
+    QVERIFY(document.saveAs(QUrl::fromLocalFile(hetPath), 0));
+    QVERIFY(!document.untitled());
+    QVERIFY(!document.dirty());
+    QVERIFY(!document.canUndo());
+
+    HetData parsed;
+    QString error;
+    QVERIFY2(HetFile::load(hetPath, parsed, error), qPrintable(error));
+    QCOMPARE(parsed.partials.size(), qsizetype(15));
+    QCOMPARE(parsed.partials.at(14).frequency.at(6).value, 10000);
+    QCOMPARE(parsed.partials.at(14).amplitude.at(6).timeMs, 12345);
+
+    QVERIFY(document.newDocument(HydraDocument::Preset::Octaves, 32000, 5, 20));
+    const QString adsPath = dir.filePath(QStringLiteral("generated.ads"));
+    QVERIFY(document.saveAs(QUrl::fromLocalFile(adsPath), 1));
+    QVERIFY(!document.dirty());
+    QVERIFY2(HetFile::load(adsPath, parsed, error), qPrintable(error));
+    QCOMPARE(parsed.partials.size(), qsizetype(10));
+    QCOMPARE(parsed.partials.at(9).frequency.first().value, 10240);
+    QCOMPARE(parsed.partials.at(9).frequency.last().timeMs, 32000);
+    QVERIFY(parsed.format == HetFormat::LegacyBinaryLittleEndian);
 }
 
 QTEST_GUILESS_MAIN(HetFileTest)

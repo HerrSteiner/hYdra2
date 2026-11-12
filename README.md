@@ -13,7 +13,7 @@ open-source applications.
 
 ## Current implementation
 
-- Qt 6.9+ / Qt Quick / Qt Graphs, targeting macOS, Linux and Windows.
+- Qt 6.10+ / Qt Quick / Qt Graphs, targeting macOS, Linux and Windows.
 - GPU-backed 3D breakpoint editor using Qt Graphs `Scatter3D` and
   `Spline3DSeries`.
 - X = time, Y = amplitude or frequency, Z = a fixed display-only lane for each
@@ -34,6 +34,38 @@ open-source applications.
 - Reads legacy signed 16-bit HETRO/adsyn files, with or without the historical
   partial-count header, and auto-detects little/big endian data.
 - Writes current HETRO text (`.het`) and legacy binary (`.ads`).
+- **File → New…** creates editable analyses with Harmonics, Octaves, and Vocoder presets.
+- New, Open, and Quit prompt to save or discard any unsaved changes.
+
+## Creating a new analysis
+
+Choose **File → New…** (Cmd+N on macOS, Ctrl+N elsewhere). The dialog
+provides the following presets:
+
+- **Harmonics:** 10 partials at integer multiples of the fundamental, starting
+  at 1 × fundamental through 10 × fundamental. **Historical note:** this is
+  the preset named *Octaves* in the original hYdra/hYdraJ, despite generating
+  harmonics rather than octave-spaced frequencies. hYdra2 corrects the name
+  without changing this frequency scheme.
+- **Octaves:** 10 partials at 1, 2, 4, 8, ... 512 times the fundamental.
+  This is a new preset with actual octave spacing.
+- **Vocoder:** the original 15-frequency table:
+  100, 120, 160, 230, 330, 500, 750, 1100, 1300, 1600, 2300, 3300,
+  5000, 7500, and 10000 Hz. The fundamental input is ignored.
+
+Choose **Length (milliseconds)** and **Breakpoints per partial**. Each amplitude
+track is initialized to a constant value of 3500, while each frequency track
+holds the selected frequency. The breakpoints are evenly distributed from 0 to
+full length, including both endpoints. Newly generated documents are untitled
+and marked as modified; Save opens a file dialog for them.
+
+**Format limits:** timestamps are integers from 0 to 32766 milliseconds
+(32767 is the HETRO track terminator). The editor therefore limits newly
+created analyses to 32.766 seconds and 4096 breakpoints per partial, with at
+least 1 ms between successive breakpoints. Frequencies must be in the
+1–32767 Hz range; the Octaves preset consequently accepts fundamentals up to
+63 Hz with ten partials. This is a file format limit, not an audio-rate or
+Nyquist limit.
 
 ## Interaction
 
@@ -61,8 +93,8 @@ Partial mixer:
 
 ## Build
 
-Qt Graphs' `Spline3DSeries` is available from Qt 6.9, so hYdra2 requires Qt
-6.9 or later.
+Qt Graphs' `Spline3DSeries` became available in Qt 6.9. The current
+CMake project requires Qt 6.10 or later.
 
 ```sh
 cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/Qt/6.11.2/<kit>

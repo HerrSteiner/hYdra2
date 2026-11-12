@@ -31,6 +31,7 @@ class HydraDocument final : public QObject
     Q_OBJECT
     Q_PROPERTY(QString fileName READ fileName NOTIFY fileChanged)
     Q_PROPERTY(QUrl fileUrl READ fileUrl NOTIFY fileChanged)
+    Q_PROPERTY(bool untitled READ untitled NOTIFY fileChanged)
     Q_PROPERTY(bool loaded READ loaded NOTIFY documentReset)
     Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStateChanged)
@@ -46,10 +47,19 @@ class HydraDocument final : public QObject
 public:
     explicit HydraDocument(QObject* parent = nullptr);
 
+    enum class Preset {
+        Harmonics,
+        Octaves,
+        Vocoder
+    };
+    Q_ENUM(Preset)
+
+
     QString fileName() const;
     QUrl fileUrl() const;
+    bool untitled() const { return path_.isEmpty(); }
     bool loaded() const { return !data_.partials.isEmpty(); }
-    bool dirty() const { return !undoStack_.isClean() || editTransactionModified_; }
+    bool dirty() const { return newUnsaved_ || !undoStack_.isClean() || editTransactionModified_; }
     bool canUndo() const { return undoStack_.canUndo(); }
     bool canRedo() const { return undoStack_.canRedo(); }
     QString undoText() const { return undoStack_.undoText(); }
@@ -72,6 +82,7 @@ public:
     bool isPointSelected(const PointRef& ref) const;
     const Breakpoint* point(const PointRef& ref) const;
 
+    Q_INVOKABLE bool newDocument(Preset preset, int durationMs, int breakpointCount, int fundamentalHz);
     Q_INVOKABLE bool openUrl(const QUrl& url);
     Q_INVOKABLE bool save();
     Q_INVOKABLE bool saveAs(const QUrl& url, int formatIndex);
@@ -140,6 +151,7 @@ private:
     HetData data_;
     QString path_;
     QString errorString_;
+    bool newUnsaved_ = false; // Unsaved generated documents must be marked modified.
     QSet<int> selectedPartials_;
     QVector<PointRef> selectedPoints_;
 

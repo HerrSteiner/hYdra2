@@ -33,6 +33,36 @@ ApplicationWindow {
 
     property int editorMode: 0
     property bool logicSnap: true
+    property string pendingOperation: ""
+    property string continueAfterSave: ""
+    property bool closeApproved: false
+
+    function performOperation(operation) {
+        if (operation === "new") {
+            newDialog.open()
+        } else if (operation === "open") {
+            openDialog.open()
+        } else if (operation === "quit") {
+            closeApproved = true
+            window.close()
+        }
+    }
+
+    function requestOperation(operation) {
+        if (hydraDocument.dirty) {
+            pendingOperation = operation
+            unsavedDialog.open()
+        } else {
+            performOperation(operation)
+        }
+    }
+
+    onClosing: function(close) {
+        if (!closeApproved && hydraDocument.dirty) {
+            close.accepted = false
+            requestOperation("quit")
+        }
+    }
 
     function partialCategories(count) {
         let categories = []
@@ -66,10 +96,17 @@ ApplicationWindow {
     }
 
     Action {
+        id: newAction
+        text: qsTr("New…")
+        shortcut: StandardKey.New
+        onTriggered: window.requestOperation("new")
+    }
+
+    Action {
         id: openAction
         text: qsTr("Open…")
         shortcut: StandardKey.Open
-        onTriggered: openDialog.open()
+        onTriggered: window.requestOperation("open")
     }
 
     Action {
@@ -77,7 +114,12 @@ ApplicationWindow {
         text: qsTr("Save")
         shortcut: StandardKey.Save
         enabled: hydraDocument.loaded
-        onTriggered: hydraDocument.save()
+        onTriggered: {
+            if (hydraDocument.untitled)
+                saveDialog.open()
+            else
+                hydraDocument.save()
+        }
     }
 
     Action {
@@ -92,7 +134,7 @@ ApplicationWindow {
         id: quitAction
         text: qsTr("Quit")
         shortcut: StandardKey.Quit
-        onTriggered: Qt.quit()
+        onTriggered: window.close()
     }
 
     Action {
@@ -180,6 +222,7 @@ ApplicationWindow {
     menuBar: MenuBar {
         Menu {
             title: qsTr("File")
+            MenuItem { action: newAction }
             MenuItem { action: openAction }
             MenuSeparator { }
             MenuItem { action: saveAction }
@@ -237,7 +280,177 @@ ApplicationWindow {
             qsTr("Legacy adsyn binary (*.ads)")
         ]
         defaultSuffix: selectedNameFilter.index === 1 ? "ads" : "het"
-        onAccepted: hydraDocument.saveAs(selectedFile, selectedNameFilter.index)
+        onAccepted: {
+            const saved = hydraDocument.saveAs(selectedFile, selectedNameFilter.index)
+            const operation = window.continueAfterSave
+            window.continueAfterSave = ""
+            if (saved && operation.length > 0)
+                window.performOperation(operation)
+        }
+        onRejected: window.continueAfterSave = ""
+    }
+
+    Dialog {
+        id: unsavedDialog
+        title: qsTr("Unsaved changes")
+        modal: true
+        anchors.centerIn: parent
+        width: 420
+        standardButtons: Dialog.NoButton
+
+        contentItem: ColumnLayout {
+            spacing: 16
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: qsTr("The current analysis has unsaved changes. Save them before continuing?")
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Button {
+                    text: qsTr("Cancel")
+                    onClicked: {
+                        unsavedDialog.close()
+                        window.pendingOperation = ""
+                    }
+                }
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: qsTr("Discard")
+                    onClicked: {
+                        const operation = window.pendingOperation
+                        window.pendingOperation = ""
+                        unsavedDialog.close()
+                        window.performOperation(operation)
+                    }
+                }
+                Button {
+                    text: qsTr("Save")
+                    highlighted: true
+                    onClicked: {
+                        const operation = window.pendingOperation
+                        window.pendingOperation = ""
+                        unsavedDialog.close()
+                        if (hydraDocument.untitled) {
+                            window.continueAfterSave = operation
+                            saveDialog.open()
+                        } else if (hydraDocument.save()) {
+                            window.performOperation(operation)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: newDialog
+        title: qsTr("New Analysis")
+        modal: true
+        anchors.centerIn: parent
+        width: 460
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        onAccepted: {
+            if (hydraDocument.newDocument(presetCombo.currentValue,
+                                          durationSpin.value,
+                                          breakpointsSpin.value,
+                                          fundamentalSpin.value)) {
+                window.editorMode = 0
+                focusSelected.checked = false
+            } else {
+                // Preserve the user's settings and show the error in the status bar.
+                newDialog.open()
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            Label { text: qsTr("Preset") }
+
+            ComboBox {
+                id: presetCombo
+                Layout.fillWidth: true
+
+                textRole: "text"
+                valueRole: "value"
+
+                model: [
+                    {
+                        text: qsTr("Harmonics"),
+                        value: HydraDocument.Harmonics
+                    },
+                    {
+                        text: qsTr("Octaves"),
+                        value: HydraDocument.Octaves
+                    },
+                    {
+                        text: qsTr("Vocoder"),
+                        value: HydraDocument.Vocoder
+                    }
+                ]
+
+                onActivated: {
+                    if (currentValue === HydraDocument.Octaves)
+                        fundamentalSpin.value = 20
+                    else if (currentValue === HydraDocument.Harmonics)
+                        fundamentalSpin.value = 100
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: presetCombo.currentValue === HydraDocument.Harmonics
+                      ? qsTr("10 partials spaced at multiples of the fundamental.")
+                      : presetCombo.currentValue === HydraDocument.Octaves
+                        ? qsTr("10 partials spaced one octave apart (fundamental × 2ⁿ).")
+                        : qsTr("15 fixed partials using the original vocoder frequency table.")
+                font.pixelSize: 12
+                opacity: 0.75
+            }
+            Label { text: qsTr("Length (milliseconds)") }
+            SpinBox {
+                id: durationSpin
+                Layout.fillWidth: true
+                from: 1
+                to: 32766
+                value: 10000
+                editable: true
+            }
+            Label { text: qsTr("Breakpoints per partial") }
+            SpinBox {
+                id: breakpointsSpin
+                Layout.fillWidth: true
+                from: 2
+                to: Math.min(4096, durationSpin.value + 1)
+                value: 10
+                editable: true
+            }
+            Label {
+                text: qsTr("Fundamental frequency (Hz)")
+                enabled: presetCombo.currentValue !== HydraDocument.Vocoder
+            }
+            SpinBox {
+                id: fundamentalSpin
+                Layout.fillWidth: true
+                from: 1
+                to: presetCombo.currentValue === HydraDocument.Octaves ? 63 : 3276
+                value: 100
+                editable: true
+                enabled: presetCombo.currentValue !== HydraDocument.Vocoder
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: qsTr("New files start with a constant amplitude of 3500 and evenly spaced breakpoints. Duration is limited by the HETRO 16-bit file format.")
+                font.pixelSize: 12
+                opacity: 0.7
+            }
+        }
     }
 
     Dialog {

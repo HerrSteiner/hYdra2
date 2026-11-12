@@ -36,6 +36,10 @@ int main(int argc, char* argv[])
     qmlRegisterType<hydra2::BreakpointGraphModel>("Hydra2.Native", 1, 0, "BreakpointGraphModel");
     qmlRegisterType<hydra2::PartialAxisFormatter>("Hydra2.Native", 1, 0, "PartialAxisFormatter");
     qmlRegisterType<hydra2::PartialMixer>("Hydra2.Native", 1, 0, "PartialMixer");
+    qmlRegisterUncreatableType<hydra2::HydraDocument>(
+        "Hydra2.Native", 1, 0, "HydraDocument",
+        "HydraDocument is created in C++"
+    );
 
     hydra2::HydraDocument document;
 

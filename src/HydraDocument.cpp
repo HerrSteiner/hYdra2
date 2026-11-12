@@ -22,6 +22,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QtGui/QUndoCommand>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <utility>
 
@@ -239,6 +240,103 @@ double HydraDocument::partialMaximumGain(int partial) const
 }
 
 
+bool HydraDocument::newDocument(Preset preset, int durationMs, int breakpointCount, int fundamentalHz)
+{
+    // The HETRO/adsyn 16-bit format reserves 32767 as a track terminator.
+    // Each breakpoint must have a distinct integer-millisecond timestamp.
+    switch (preset) {
+    case Preset::Harmonics:
+    case Preset::Octaves:
+    case Preset::Vocoder:
+        break;
+
+    default:
+        setError(QStringLiteral("Unknown New-document preset."));
+        return false;
+    }
+
+    if (durationMs < 1 || durationMs > 32766) {
+        setError(QStringLiteral("Duration must be between 1 and 32766 milliseconds."));
+        return false;
+    }
+    if (breakpointCount < 2 || breakpointCount > durationMs + 1 || breakpointCount > 4096) {
+        setError(QStringLiteral("Breakpoint count must be between 2 and the smaller of duration + 1 and 4096."));
+        return false;
+    }
+
+    // The original hYdra preset called "Octaves" is a harmonic series.
+    // hYdra2 makes that explicit and adds true octave spacing as a new preset.
+    constexpr int harmonicPartialCount = 10;
+    constexpr int octavePartialCount = 10;
+    constexpr std::array<int, 15> vocoderFrequencies = {
+        100, 120, 160, 230, 330, 500, 750, 1100, 1300, 1600,
+        2300, 3300, 5000, 7500, 10000
+    };
+    constexpr int initialAmplitude = 3500;
+
+    const int partialCount = preset == Preset::Vocoder ? static_cast<int>(vocoderFrequencies.size())
+                                                       : (preset == Preset::Octaves ? octavePartialCount : harmonicPartialCount);
+    if (preset != Preset::Vocoder && fundamentalHz < 1) {
+        setError(QStringLiteral("Fundamental frequency must be positive."));
+        return false;
+    }
+
+    QVector<int> frequencies;
+    frequencies.reserve(partialCount);
+    for (int i = 0; i < partialCount; ++i) {
+        const qint64 frequency = preset == Preset::Vocoder ? vocoderFrequencies[static_cast<size_t>(i)]
+                    : (preset == Preset::Octaves ? qint64(fundamentalHz) * (qint64(1) << i)
+                    : qint64(fundamentalHz) * (i + 1));
+        if (frequency < 1 || frequency > 32767) {
+            setError(QStringLiteral("Highest partial frequency exceeds 32767 Hz. Lower the fundamental."));
+            return false;
+        }
+        frequencies.push_back(static_cast<int>(frequency));
+    }
+
+    QVector<int> times;
+    times.reserve(breakpointCount);
+    for (int i = 0; i < breakpointCount; ++i) {
+        // Integer rounding produces exact 0 and duration end points, with
+        // strictly increasing times thanks to breakpointCount <= duration + 1.
+        const qint64 time = (qint64(i) * durationMs + (breakpointCount - 1) / 2)
+                            / (breakpointCount - 1);
+        times.push_back(static_cast<int>(time));
+    }
+
+    HetData generated;
+    generated.format = HetFormat::CurrentText;
+    generated.binaryHasHeader = true;
+    generated.partials.reserve(partialCount);
+    quint64 id = 1;
+    for (int frequency : frequencies) {
+        Partial partial;
+        partial.amplitude.reserve(breakpointCount);
+        partial.frequency.reserve(breakpointCount);
+        for (int time : times) {
+            partial.amplitude.push_back({id++, time, initialAmplitude});
+            partial.frequency.push_back({id++, time, frequency});
+        }
+        generated.partials.push_back(std::move(partial));
+    }
+
+    // Build and validate everything before replacing the existing document.
+    data_ = std::move(generated);
+    path_.clear();
+    selectedPartials_.clear();
+    selectedPoints_.clear();
+    resetEditTransaction();
+    undoStack_.clear();
+    undoStack_.setClean();
+    newUnsaved_ = true;
+    setError({});
+    emit fileChanged();
+    emit documentReset();
+    emit selectionChanged();
+    emit dirtyChanged();
+    return true;
+}
+
 bool HydraDocument::openUrl(const QUrl& url)
 {
     const QString path = url.toLocalFile();
@@ -255,6 +353,7 @@ bool HydraDocument::openUrl(const QUrl& url)
     }
 
     data_ = std::move(loaded);
+    newUnsaved_ = false;
     path_ = path;
     selectedPartials_.clear();
     selectedPoints_.clear();
@@ -265,6 +364,7 @@ bool HydraDocument::openUrl(const QUrl& url)
     emit fileChanged();
     emit documentReset();
     emit selectionChanged();
+    emit dirtyChanged();
     return true;
 }
 
@@ -280,6 +380,10 @@ bool HydraDocument::save()
 bool HydraDocument::saveAs(const QUrl& url, int formatIndex)
 {
     QString path = url.toLocalFile();
+    if (path.isEmpty() || !loaded()) {
+        setError(QStringLiteral("No document or destination path to save."));
+        return false;
+    }
 
     if (formatIndex == 1) {
         // Legacy ADS binary.
@@ -323,9 +427,11 @@ bool HydraDocument::saveToPath(const QString& path, HetFormat format)
     path_ = path;
     data_.format = format;
     data_.binaryHasHeader = withHeader;
+    newUnsaved_ = false;
     undoStack_.setClean();
     setError({});
     emit fileChanged();
+    emit dirtyChanged();
     return true;
 }
 
